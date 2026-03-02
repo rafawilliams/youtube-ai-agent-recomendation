@@ -1,0 +1,48 @@
+# Virtual environments
+.venv/
+venv/
+
+# Git
+.git/
+.gitignore
+
+# Claude Code
+.claude/
+.agents/
+SKILL.md
+skills-lock.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets (se montan como volúmenes)
+.env
+.env.local
+credentials.json
+token.json
+token_integrations.json
+
+# ML models (se regeneran / montan como volumen)
+models/*.pkl
+models/*.meta.json
+
+# Runtime dirs (se montan como volúmenes)
+logs/
+data/
+
+# Docs & plans
+docs/
+*.md
+!requirements.txt
+!requirements-windows.txt
+
+# IDE
+.vscode/
+.idea/
+
+# Test/coverage
+.pytest_cache/
+.coverage
+htmlcov/
