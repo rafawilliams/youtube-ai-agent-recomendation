@@ -1466,6 +1466,47 @@ RULES:
 
         return self._call_claude(prompt, max_tokens=1200)
 
+    def recommend_series_format(
+        self,
+        series_name: str,
+        channel_name: str,
+        episodes: list[dict],
+        language: str = 'es',
+    ) -> str:
+        """
+        Genera recomendación de formato para una serie (Mejora 17.2).
+
+        Args:
+            series_name: Nombre de la serie
+            channel_name: Nombre del canal
+            episodes: Lista de dicts con title, episode_number, view_count,
+                      engagement_rate, published_at
+        """
+        ep_lines = []
+        for ep in episodes:
+            views = ep.get('view_count', 0) or 0
+            eng = ep.get('engagement_rate', 0) or 0
+            ep_lines.append(
+                f"  Ep {ep.get('episode_number', '?')}: "
+                f"\"{ep.get('title', '')}\" — "
+                f"{views:,.0f} vistas, {eng:.2f}% engagement"
+            )
+        ep_text = '\n'.join(ep_lines)
+
+        prompt = f"""Analiza esta serie de videos del canal "{channel_name}" y da recomendaciones de formato.
+
+Serie: "{series_name}"
+Episodios ({len(episodes)} total):
+{ep_text}
+
+Responde en {language}, máximo 250 palabras, con estos puntos:
+1. **Tendencia de audiencia**: ¿las vistas crecen, decrecen o se mantienen entre episodios?
+2. **Punto de fatiga**: ¿En qué episodio se pierde audiencia? ¿Cuántos episodios es lo óptimo?
+3. **Recomendación concreta**: Una acción específica (series más cortas, cambiar formato, nuevo ángulo, etc.)
+"""
+
+        return self._call_claude(prompt, max_tokens=800)
+
 
 if __name__ == "__main__":
     # Test del analizador
