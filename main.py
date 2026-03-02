@@ -17,6 +17,7 @@ from ai_analyzer import AIAnalyzer
 from analytics_extractor import YouTubeAnalyticsExtractor
 from telegram_notifier import TelegramNotifier
 from series_detector import SeriesDetector
+from revenue_analyzer import EvergreenDetector
 
 log = logging.getLogger('pipeline')
 
@@ -423,6 +424,50 @@ def _step_series_detection(analyzer):
                  s['series_name'][:50], len(s['episodes']), trend)
 
 
+def _step_revenue_analysis():
+    """Calcula scores evergreen para videos con suficiente historial (Mejora 16.3)."""
+    log.info("PASO REVENUE: Calculando scores evergreen...")
+
+    detector = EvergreenDetector()
+
+    with YouTubeDatabase() as db:
+        own_channels = db.get_own_channels()
+
+    if own_channels.empty:
+        log.info("  Sin canales propios para analizar")
+        return
+
+    total_scored = 0
+    for _, ch in own_channels.iterrows():
+        channel_id = ch['channel_id']
+        with YouTubeDatabase() as db:
+            results = detector.analyze_channel(channel_id, db)
+
+        if not results:
+            continue
+
+        evergreen_count = sum(1 for r in results
+                              if r['classification'] == 'evergreen')
+        log.info("  🌲 %s: %d videos analizados, %d evergreen",
+                 ch.get('channel_name', channel_id), len(results), evergreen_count)
+
+        with YouTubeDatabase() as db:
+            for r in results:
+                db.save_evergreen_score({
+                    'video_id': r['video_id'],
+                    'channel_id': channel_id,
+                    'evergreen_score': r['evergreen_score'],
+                    'classification': r['classification'],
+                    'days_tracked': r['days_tracked'],
+                    'recent_daily_views': r['recent_daily_views'],
+                    'early_daily_views': r['early_daily_views'],
+                    'decay_rate': r['decay_rate'],
+                })
+        total_scored += len(results)
+
+    log.info("  Scores evergreen calculados para %d videos", total_scored)
+
+
 def _step4_analytics(videos_df, channel_ids):
     """Extrae analytics avanzados via OAuth (opcional — requiere credentials.json)."""
     log.info("PASO 4: Extrayendo analytics avanzados (YouTube Analytics API)...")
@@ -508,6 +553,9 @@ def main():
 
         # Detección de series y recomendaciones de formato (Mejora 17.x)
         _step_series_detection(analyzer)
+
+        # Análisis de revenue y detección de evergreen (Mejora 16.x)
+        _step_revenue_analysis()
 
         _step3_analyze(analyzer, videos_df, channel_ids, notifier=notifier)
 
