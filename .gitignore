@@ -74,3 +74,9 @@ token.json
 # Modelos ML serializados (se regeneran automáticamente)
 models/*.pkl
 models/*.meta.json
+
+# Claude Code
+.claude/
+.agents/
+SKILL.md
+skills-lock.json
