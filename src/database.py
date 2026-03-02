@@ -294,6 +294,37 @@ class YouTubeDatabase:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS video_series (
+                series_id INT AUTO_INCREMENT PRIMARY KEY,
+                channel_id VARCHAR(255) NOT NULL,
+                series_name VARCHAR(500) NOT NULL,
+                detected_pattern VARCHAR(500),
+                episode_count INT DEFAULT 0,
+                avg_views FLOAT DEFAULT 0,
+                avg_engagement FLOAT DEFAULT 0,
+                trend VARCHAR(20) DEFAULT 'stable',
+                ai_recommendation TEXT,
+                created_at VARCHAR(50) NOT NULL,
+                updated_at VARCHAR(50) NOT NULL,
+                UNIQUE KEY uq_series_channel_name (channel_id, series_name),
+                FOREIGN KEY (channel_id) REFERENCES channels(channel_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS series_episodes (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                series_id INT NOT NULL,
+                video_id VARCHAR(255) NOT NULL,
+                episode_number INT DEFAULT 0,
+                detected_at VARCHAR(50) NOT NULL,
+                UNIQUE KEY uq_episode_video (video_id),
+                FOREIGN KEY (series_id) REFERENCES video_series(series_id),
+                FOREIGN KEY (video_id) REFERENCES videos(video_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
         # Índices (ignorar error si ya existen)
         for sql in [
             "CREATE INDEX idx_videos_channel ON videos(channel_id)",
@@ -1467,6 +1498,111 @@ class YouTubeDatabase:
             (video_id,),
         )
         return cursor.fetchone() is not None
+
+    # ── Series (Mejora 17.x) ────────────────────────────────────────
+
+    def save_series(self, series: dict) -> int:
+        """Guarda o actualiza una serie. Retorna series_id."""
+        cursor = self.conn.cursor()
+        now = datetime.now().isoformat()
+        try:
+            cursor.execute("""
+                INSERT INTO video_series
+                (channel_id, series_name, detected_pattern, episode_count,
+                 avg_views, avg_engagement, trend, ai_recommendation,
+                 created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    episode_count = VALUES(episode_count),
+                    avg_views = VALUES(avg_views),
+                    avg_engagement = VALUES(avg_engagement),
+                    trend = VALUES(trend),
+                    ai_recommendation = VALUES(ai_recommendation),
+                    updated_at = VALUES(updated_at)
+            """, (
+                series['channel_id'],
+                series['series_name'],
+                series.get('detected_pattern', ''),
+                series.get('episode_count', 0),
+                series.get('avg_views', 0),
+                series.get('avg_engagement', 0),
+                series.get('trend', 'stable'),
+                series.get('ai_recommendation', ''),
+                now, now,
+            ))
+            self.conn.commit()
+            if cursor.lastrowid:
+                return cursor.lastrowid
+            cursor.execute("""
+                SELECT series_id FROM video_series
+                WHERE channel_id = %s AND series_name = %s
+            """, (series['channel_id'], series['series_name']))
+            row = cursor.fetchone()
+            return row['series_id'] if row else 0
+        except Exception as e:
+            self.conn.rollback()
+            log.warning("Error guardando serie: %s", e)
+            raise
+
+    def save_series_episode(self, series_id: int, video_id: str, episode_number: int):
+        """Vincula un video a una serie como episodio. Ignora duplicados."""
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO series_episodes
+                (series_id, video_id, episode_number, detected_at)
+                VALUES (%s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    series_id = VALUES(series_id),
+                    episode_number = VALUES(episode_number)
+            """, (series_id, video_id, episode_number, datetime.now().isoformat()))
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            if 'Duplicate' not in str(e):
+                raise
+
+    def get_all_series(self, channel_id: str = None) -> pd.DataFrame:
+        """Retorna todas las series, opcionalmente filtradas por canal."""
+        cursor = self.conn.cursor()
+        query = """
+            SELECT s.*, c.channel_name
+            FROM video_series s
+            JOIN channels c ON s.channel_id = c.channel_id
+        """
+        if channel_id:
+            query += " WHERE s.channel_id = %s ORDER BY s.episode_count DESC"
+            cursor.execute(query, (channel_id,))
+        else:
+            query += " ORDER BY s.episode_count DESC"
+            cursor.execute(query)
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def get_series_episodes(self, series_id: int) -> pd.DataFrame:
+        """Retorna los episodios de una serie con métricas de video."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT
+                se.episode_number,
+                v.video_id, v.title, v.published_at, v.video_type,
+                m.view_count, m.like_count, m.comment_count, m.engagement_rate
+            FROM series_episodes se
+            JOIN videos v ON se.video_id = v.video_id
+            LEFT JOIN (
+                SELECT video_id, view_count, like_count, comment_count,
+                       engagement_rate,
+                       ROW_NUMBER() OVER (PARTITION BY video_id ORDER BY recorded_at DESC) AS rn
+                FROM video_metrics
+            ) m ON v.video_id = m.video_id AND m.rn = 1
+            WHERE se.series_id = %s
+            ORDER BY se.episode_number
+        """, (series_id,))
+        rows = cursor.fetchall()
+        df = pd.DataFrame(rows) if rows else pd.DataFrame()
+        if not df.empty:
+            df['published_at'] = pd.to_datetime(df['published_at'])
+        return df
 
     def close(self):
         """Cierra la conexión a la base de datos"""
