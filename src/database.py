@@ -325,6 +325,24 @@ class YouTubeDatabase:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS evergreen_scores (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                video_id VARCHAR(255) NOT NULL,
+                channel_id VARCHAR(255) NOT NULL,
+                evergreen_score FLOAT NOT NULL DEFAULT 0,
+                classification VARCHAR(30) NOT NULL DEFAULT 'insufficient_data',
+                days_tracked INT DEFAULT 0,
+                recent_daily_views FLOAT DEFAULT 0,
+                early_daily_views FLOAT DEFAULT 0,
+                decay_rate FLOAT DEFAULT 0,
+                computed_at VARCHAR(50) NOT NULL,
+                UNIQUE KEY uq_eg_video (video_id),
+                FOREIGN KEY (video_id) REFERENCES videos(video_id),
+                FOREIGN KEY (channel_id) REFERENCES channels(channel_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
         # Índices (ignorar error si ya existen)
         for sql in [
             "CREATE INDEX idx_videos_channel ON videos(channel_id)",
@@ -1603,6 +1621,77 @@ class YouTubeDatabase:
         if not df.empty:
             df['published_at'] = pd.to_datetime(df['published_at'])
         return df
+
+    # ── Evergreen (Mejora 16.3) ────────────────────────────────────
+
+    def save_evergreen_score(self, data: dict):
+        """Guarda o actualiza el score evergreen de un video."""
+        cursor = self.conn.cursor()
+        now = datetime.now().isoformat()
+        try:
+            cursor.execute("""
+                INSERT INTO evergreen_scores
+                (video_id, channel_id, evergreen_score, classification,
+                 days_tracked, recent_daily_views, early_daily_views,
+                 decay_rate, computed_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    evergreen_score = VALUES(evergreen_score),
+                    classification = VALUES(classification),
+                    days_tracked = VALUES(days_tracked),
+                    recent_daily_views = VALUES(recent_daily_views),
+                    early_daily_views = VALUES(early_daily_views),
+                    decay_rate = VALUES(decay_rate),
+                    computed_at = VALUES(computed_at)
+            """, (
+                data['video_id'],
+                data['channel_id'],
+                data.get('evergreen_score', 0),
+                data.get('classification', 'insufficient_data'),
+                data.get('days_tracked', 0),
+                data.get('recent_daily_views', 0),
+                data.get('early_daily_views', 0),
+                data.get('decay_rate', 0),
+                now,
+            ))
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            log.warning("Error guardando evergreen score: %s", e)
+            raise
+
+    def get_evergreen_scores(self, channel_id: str) -> pd.DataFrame:
+        """Retorna scores evergreen de un canal con datos del video."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT e.video_id, e.evergreen_score, e.classification,
+                   e.days_tracked, e.recent_daily_views, e.early_daily_views,
+                   e.decay_rate, e.computed_at,
+                   v.title, v.video_type, v.published_at,
+                   m.view_count, m.engagement_rate
+            FROM evergreen_scores e
+            JOIN videos v ON e.video_id = v.video_id
+            LEFT JOIN (
+                SELECT video_id, view_count, engagement_rate,
+                       ROW_NUMBER() OVER (PARTITION BY video_id ORDER BY recorded_at DESC) AS rn
+                FROM video_metrics
+            ) m ON e.video_id = m.video_id AND m.rn = 1
+            WHERE e.channel_id = %s
+            ORDER BY e.evergreen_score DESC
+        """, (channel_id,))
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def get_evergreen_score(self, video_id: str) -> dict | None:
+        """Retorna el score evergreen de un video o None."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT video_id, evergreen_score, classification,
+                   days_tracked, recent_daily_views, early_daily_views,
+                   decay_rate, computed_at
+            FROM evergreen_scores WHERE video_id = %s
+        """, (video_id,))
+        return cursor.fetchone()
 
     def close(self):
         """Cierra la conexión a la base de datos"""
