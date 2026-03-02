@@ -16,6 +16,7 @@ from database import YouTubeDatabase
 from ai_analyzer import AIAnalyzer
 from analytics_extractor import YouTubeAnalyticsExtractor
 from telegram_notifier import TelegramNotifier
+from series_detector import SeriesDetector
 
 log = logging.getLogger('pipeline')
 
@@ -339,6 +340,89 @@ def _step_competitor_alerts(analyzer, notifier):
         log.info("  Sin videos virales de competidores detectados")
 
 
+def _step_series_detection(analyzer):
+    """Detecta series automáticamente y genera recomendaciones de formato."""
+    log.info("PASO SERIES: Detectando series de videos...")
+
+    with YouTubeDatabase() as db:
+        all_videos = db.get_all_videos()
+
+    if all_videos.empty:
+        log.info("  Sin videos para analizar")
+        return
+
+    detector = SeriesDetector()
+    series_list = detector.detect(all_videos)
+
+    if not series_list:
+        log.info("  No se detectaron series")
+        return
+
+    log.info("  📚 %d series detectadas", len(series_list))
+
+    for s in series_list:
+        with YouTubeDatabase() as db:
+            # Calcular métricas agregadas de la serie
+            ep_ids = [e['video_id'] for e in s['episodes']]
+            ep_videos = all_videos[all_videos['video_id'].isin(ep_ids)]
+            avg_views = float(ep_videos['view_count'].mean()) if not ep_videos.empty and 'view_count' in ep_videos.columns else 0
+            avg_eng = float(ep_videos['engagement_rate'].mean()) if not ep_videos.empty and 'engagement_rate' in ep_videos.columns else 0
+
+            # Determinar tendencia (comparar primera mitad vs segunda mitad)
+            trend = 'stable'
+            if len(ep_videos) >= 4 and 'view_count' in ep_videos.columns:
+                sorted_eps = ep_videos.sort_values('published_at')
+                mid = len(sorted_eps) // 2
+                first_half = sorted_eps.iloc[:mid]['view_count'].mean()
+                second_half = sorted_eps.iloc[mid:]['view_count'].mean()
+                if first_half > 0:
+                    ratio = second_half / first_half
+                    if ratio > 1.15:
+                        trend = 'growing'
+                    elif ratio < 0.85:
+                        trend = 'declining'
+
+            # Generar recomendación AI si hay >=3 episodios
+            ai_rec = ''
+            if len(s['episodes']) >= 3 and analyzer:
+                ep_data = []
+                for ep in s['episodes']:
+                    vid = ep_videos[ep_videos['video_id'] == ep['video_id']]
+                    ep_data.append({
+                        'title': ep['title'],
+                        'episode_number': ep['episode_number'],
+                        'view_count': float(vid['view_count'].iloc[0]) if not vid.empty and 'view_count' in vid.columns else 0,
+                        'engagement_rate': float(vid['engagement_rate'].iloc[0]) if not vid.empty and 'engagement_rate' in vid.columns else 0,
+                        'published_at': ep['published_at'],
+                    })
+                channel_name = ep_videos['channel_title'].iloc[0] if 'channel_title' in ep_videos.columns and not ep_videos.empty else ''
+                ai_rec = analyzer.recommend_series_format(
+                    s['series_name'], channel_name, ep_data,
+                )
+
+            series_data = {
+                'channel_id': s['channel_id'],
+                'series_name': s['series_name'],
+                'detected_pattern': s['detected_pattern'],
+                'episode_count': len(s['episodes']),
+                'avg_views': avg_views,
+                'avg_engagement': avg_eng,
+                'trend': trend,
+                'ai_recommendation': ai_rec,
+            }
+
+            series_id = db.save_series(series_data)
+
+            # Guardar episodios
+            for ep in s['episodes']:
+                db.save_series_episode(
+                    series_id, ep['video_id'], ep['episode_number'],
+                )
+
+        log.info("  📚 Serie: %s (%d episodios, tendencia: %s)",
+                 s['series_name'][:50], len(s['episodes']), trend)
+
+
 def _step4_analytics(videos_df, channel_ids):
     """Extrae analytics avanzados via OAuth (opcional — requiere credentials.json)."""
     log.info("PASO 4: Extrayendo analytics avanzados (YouTube Analytics API)...")
@@ -421,6 +505,9 @@ def main():
 
         # Alertas de videos virales de competidores (Mejora 7.2)
         _step_competitor_alerts(analyzer, notifier)
+
+        # Detección de series y recomendaciones de formato (Mejora 17.x)
+        _step_series_detection(analyzer)
 
         _step3_analyze(analyzer, videos_df, channel_ids, notifier=notifier)
 
