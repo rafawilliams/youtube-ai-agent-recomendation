@@ -18,6 +18,7 @@ from analytics_extractor import YouTubeAnalyticsExtractor
 from telegram_notifier import TelegramNotifier
 from series_detector import SeriesDetector
 from revenue_analyzer import EvergreenDetector
+from thumbnail_analyzer import ThumbnailScorer
 
 log = logging.getLogger('pipeline')
 
@@ -468,6 +469,37 @@ def _step_revenue_analysis():
     log.info("  Scores evergreen calculados para %d videos", total_scored)
 
 
+def _step_thumbnail_analysis(anthropic_api_key: str):
+    """Analiza thumbnails de videos sin score usando Claude Vision (Mejora 8.1)."""
+    log.info("PASO THUMBNAILS: Analizando miniaturas con Claude Vision...")
+
+    max_per_run = int(os.getenv('MAX_THUMBNAILS_PER_RUN', '50'))
+    scorer = ThumbnailScorer(anthropic_api_key)
+
+    with YouTubeDatabase() as db:
+        own_channels = db.get_own_channels()
+
+    if own_channels.empty:
+        log.info("  Sin canales propios para analizar")
+        return
+
+    total_analyzed = 0
+    for _, ch in own_channels.iterrows():
+        channel_id = ch['channel_id']
+        with YouTubeDatabase() as db:
+            results = scorer.analyze_channel(channel_id, db, max_per_run=max_per_run)
+
+        if not results:
+            continue
+
+        avg_click = sum(r.get('clickability', 0) for r in results) / len(results)
+        log.info("  🖼 %s: %d thumbnails analizadas (clickability prom: %.1f)",
+                 ch.get('channel_name', channel_id), len(results), avg_click)
+        total_analyzed += len(results)
+
+    log.info("  Thumbnails analizadas: %d", total_analyzed)
+
+
 def _step4_analytics(videos_df, channel_ids):
     """Extrae analytics avanzados via OAuth (opcional — requiere credentials.json)."""
     log.info("PASO 4: Extrayendo analytics avanzados (YouTube Analytics API)...")
@@ -556,6 +588,9 @@ def main():
 
         # Análisis de revenue y detección de evergreen (Mejora 16.x)
         _step_revenue_analysis()
+
+        # Análisis de thumbnails con Claude Vision (Mejora 8.x)
+        _step_thumbnail_analysis(anthropic_api_key)
 
         _step3_analyze(analyzer, videos_df, channel_ids, notifier=notifier)
 

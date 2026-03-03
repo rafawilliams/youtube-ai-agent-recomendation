@@ -343,6 +343,40 @@ class YouTubeDatabase:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS thumbnail_scores (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                video_id VARCHAR(255) NOT NULL,
+                channel_id VARCHAR(255) NOT NULL,
+                text_clarity FLOAT,
+                facial_expression FLOAT,
+                color_contrast FLOAT,
+                composition FLOAT,
+                clickability FLOAT,
+                has_text TINYINT(1) DEFAULT 0,
+                has_face TINYINT(1) DEFAULT 0,
+                dominant_colors TEXT,
+                improvement_suggestions TEXT,
+                analyzed_at VARCHAR(50) NOT NULL,
+                UNIQUE KEY uq_ts_video (video_id),
+                FOREIGN KEY (video_id) REFERENCES videos(video_id),
+                FOREIGN KEY (channel_id) REFERENCES channels(channel_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS thumbnail_comparisons (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                channel_id VARCHAR(255) NOT NULL,
+                comparison_name VARCHAR(500),
+                thumbnails_json TEXT NOT NULL,
+                winner VARCHAR(10),
+                analysis TEXT,
+                created_at VARCHAR(50) NOT NULL,
+                FOREIGN KEY (channel_id) REFERENCES channels(channel_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
         # Índices (ignorar error si ya existen)
         for sql in [
             "CREATE INDEX idx_videos_channel ON videos(channel_id)",
@@ -1692,6 +1726,130 @@ class YouTubeDatabase:
             FROM evergreen_scores WHERE video_id = %s
         """, (video_id,))
         return cursor.fetchone()
+
+    # ------------------------------------------------------------------
+    # Thumbnail scores (8.1)
+    # ------------------------------------------------------------------
+
+    def save_thumbnail_score(self, data: dict):
+        """Guarda o actualiza el score de thumbnail de un video."""
+        cursor = self.conn.cursor()
+        now = datetime.now().isoformat()
+        try:
+            cursor.execute("""
+                INSERT INTO thumbnail_scores
+                (video_id, channel_id, text_clarity, facial_expression,
+                 color_contrast, composition, clickability,
+                 has_text, has_face, dominant_colors,
+                 improvement_suggestions, analyzed_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    text_clarity = VALUES(text_clarity),
+                    facial_expression = VALUES(facial_expression),
+                    color_contrast = VALUES(color_contrast),
+                    composition = VALUES(composition),
+                    clickability = VALUES(clickability),
+                    has_text = VALUES(has_text),
+                    has_face = VALUES(has_face),
+                    dominant_colors = VALUES(dominant_colors),
+                    improvement_suggestions = VALUES(improvement_suggestions),
+                    analyzed_at = VALUES(analyzed_at)
+            """, (
+                data['video_id'],
+                data['channel_id'],
+                data.get('text_clarity'),
+                data.get('facial_expression'),
+                data.get('color_contrast'),
+                data.get('composition'),
+                data.get('clickability'),
+                1 if data.get('has_text') else 0,
+                1 if data.get('has_face') else 0,
+                json.dumps(data.get('dominant_colors', []), ensure_ascii=False),
+                json.dumps(data.get('improvement_suggestions', []), ensure_ascii=False),
+                now,
+            ))
+            self.conn.commit()
+        except Exception as e:
+            log.error("Error guardando thumbnail score para %s: %s",
+                      data.get('video_id'), e)
+            self.conn.rollback()
+
+    def get_thumbnail_scores(self, channel_id: str) -> pd.DataFrame:
+        """Obtiene todos los scores de thumbnails para un canal."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT ts.*, v.title, m.view_count
+            FROM thumbnail_scores ts
+            JOIN videos v ON ts.video_id = v.video_id
+            LEFT JOIN (
+                SELECT video_id, view_count
+                FROM video_metrics
+                WHERE (video_id, recorded_at) IN (
+                    SELECT video_id, MAX(recorded_at)
+                    FROM video_metrics GROUP BY video_id
+                )
+            ) m ON ts.video_id = m.video_id
+            WHERE ts.channel_id = %s
+            ORDER BY ts.clickability DESC
+        """, (channel_id,))
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def get_videos_without_thumbnail_score(self, channel_id: str) -> pd.DataFrame:
+        """Obtiene videos que aún no tienen score de thumbnail."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT v.video_id, v.title
+            FROM videos v
+            WHERE v.channel_id = %s
+              AND v.video_id NOT IN (
+                  SELECT video_id FROM thumbnail_scores
+              )
+            ORDER BY v.published_at DESC
+        """, (channel_id,))
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    # ------------------------------------------------------------------
+    # Thumbnail comparisons (8.2)
+    # ------------------------------------------------------------------
+
+    def save_thumbnail_comparison(self, data: dict):
+        """Guarda una comparación A/B de thumbnails."""
+        cursor = self.conn.cursor()
+        now = datetime.now().isoformat()
+        try:
+            cursor.execute("""
+                INSERT INTO thumbnail_comparisons
+                (channel_id, comparison_name, thumbnails_json,
+                 winner, analysis, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                data['channel_id'],
+                data.get('comparison_name', ''),
+                json.dumps(data.get('thumbnails', []), ensure_ascii=False),
+                data.get('winner', ''),
+                data.get('analysis', ''),
+                now,
+            ))
+            self.conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            log.error("Error guardando comparación de thumbnails: %s", e)
+            self.conn.rollback()
+            return None
+
+    def get_thumbnail_comparisons(self, channel_id: str) -> pd.DataFrame:
+        """Obtiene historial de comparaciones A/B para un canal."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT * FROM thumbnail_comparisons
+            WHERE channel_id = %s
+            ORDER BY created_at DESC
+            LIMIT 20
+        """, (channel_id,))
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
 
     def close(self):
         """Cierra la conexión a la base de datos"""
