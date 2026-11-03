@@ -1,0 +1,55 @@
+version: 1
+project:
+  root: .
+  stacks: [python, mariadb, streamlit]        # desktop/ (tauri, react, typescript, rust) llega con T005
+  package_managers: [pip]                     # pnpm (desktop/) y cargo llegan con T005
+  monorepo: false
+  signals: [requirements.txt, pytest.ini, Dockerfile, docker-compose.yml]
+sdd:
+  artifact_store: 02-DOCS/wiki/sdd
+  execution_mode: interactive
+  registry_path: .rsc/skill-registry.json
+  review_budget:
+    line_budget: 400
+    file_budget: 12
+  delivery_strategy:
+    default: ask-on-risk        # desktop-app: un commit por tarea en main, pausas en T008/T036/T045/T071 (plan §Review Workload Forecast)
+testing:
+  strict_tdd: true
+  runners: [pytest]             # + vitest y cargo test cuando exista desktop/ (T005)
+  commands:
+    apply:
+      - python -m pytest -q
+    verify:
+      - python -m pytest -q     # sustituir por `bash scripts/verify.sh` cuando exista (T004)
+phase_rules:
+  proposal: optional-on-ambiguity
+  specify: requires intent or proposal
+  plan: requires spec
+  tasks: requires plan and spec
+  analyze: requires spec plan tasks
+  implement: requires analyze pass, strict_tdd when testing.strict_tdd is true
+  verify: requires spec tasks evidence
+  archive: requires verify record and review/ship outcome
+models:
+  enabled: false              # opt-in master switch; false = honor session model, announce nothing
+  provider: anthropic         # which provider the tiers below resolve to
+  tiers:
+    heavy: claude-opus-4-8
+    balanced: claude-sonnet-4-6
+    light: claude-haiku-4-5-20251001
+  phases:
+    constitution: heavy
+    specify: balanced
+    clarify: balanced
+    plan: heavy
+    tasks: balanced
+    analyze: heavy
+    implement: balanced
+    verify: balanced
+    review: heavy
+    ship: light
+    debug: heavy
+    worktrees: light
+    sdd-init: light
+  overrides: {}               # per-phase tier overrides set by the user
