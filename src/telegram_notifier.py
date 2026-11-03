@@ -85,7 +85,8 @@ class TelegramNotifier:
             f"🎯 *Recomendación — {channel_name_safe}*",
             "",
             f"📅 {recommendation.get('recommendation_date', '—')}",
-            f"🎬 Formato: {recommendation.get('recommended_type', '—')}",
+            f"🎬 Formato: {recommendation.get('recommended_type', '—')}"
+            f" ({'9:16' if recommendation.get('recommended_type') == 'Short' else '16:9'})",
             f"📊 Performance esperado: {_md_escape(recommendation.get('predicted_performance', '—'))}",
             "",
             "✍ *Título sugerido:*",

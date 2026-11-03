@@ -8,6 +8,7 @@ Permite análisis de performance por categoría y recomendaciones más específi
 """
 import json
 import logging
+import os
 import re
 from typing import Optional
 
@@ -15,6 +16,8 @@ from anthropic import Anthropic
 from retry_config import retry_anthropic
 
 log = logging.getLogger(__name__)
+
+ANTHROPIC_MODEL = os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-6')
 
 
 class ContentClassifier:
@@ -76,8 +79,8 @@ class ContentClassifier:
 
         try:
             response = self._call_claude(prompt, max_tokens=1500)
-        except Exception as e:
-            log.warning("ContentClassifier: error Claude — %s. Usando fallback.", e)
+        except (Exception) as e:  # Anthropic API errors → fallback a keywords
+            log.warning("ContentClassifier: error Claude — %s. Usando fallback keywords.", e)
             return {
                 v['video_id']: self.classify_single_by_keywords(
                     v.get('title', ''), v.get('tags', '')
@@ -124,7 +127,7 @@ Respond ONLY with a valid JSON object mapping video_id to category:
     def _call_claude(self, prompt: str, max_tokens: int = 1500) -> str:
         """Llamada a Claude con retry automático."""
         message = self._client.messages.create(
-            model="claude-sonnet-4-6",
+            model=ANTHROPIC_MODEL,
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )

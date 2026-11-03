@@ -68,8 +68,11 @@ class YouTubeDataExtractor:
                 'created_at': channel['snippet']['publishedAt'],
                 'uploads_playlist_id': channel['contentDetails']['relatedPlaylists']['uploads']
             }
-        except Exception as e:
-            log.error("Error obteniendo info del canal: %s", e)
+        except HttpError as e:
+            log.error("Error API obteniendo info del canal %s: %s", channel_id, e)
+            return None
+        except (KeyError, IndexError) as e:
+            log.error("Respuesta inesperada para canal %s: %s", channel_id, e)
             return None
     
     def get_video_ids(self, channel_id: str, max_results: int = 50) -> List[str]:
@@ -219,6 +222,57 @@ class YouTubeDataExtractor:
             log.error("Error obteniendo analytics del video %s: %s", video_id, e)
             return None
     
+    def get_video_comments(self, video_id: str, max_results: int = 100) -> list[dict]:
+        """
+        Extrae comentarios de un video usando commentThreads.list().
+
+        Args:
+            video_id: ID del video
+            max_results: Máximo de comentarios a extraer
+
+        Returns:
+            Lista de dicts con datos del comentario. Vacío si comentarios deshabilitados.
+        """
+        comments = []
+        next_page_token = None
+
+        while len(comments) < max_results:
+            try:
+                request = self.youtube.commentThreads().list(
+                    part='snippet',
+                    videoId=video_id,
+                    maxResults=min(100, max_results - len(comments)),
+                    pageToken=next_page_token,
+                    order='relevance',
+                    textFormat='plainText',
+                )
+                response = _execute_with_retry(request)
+
+                for item in response.get('items', []):
+                    snippet = item['snippet']['topLevelComment']['snippet']
+                    comments.append({
+                        'comment_id': item['snippet']['topLevelComment']['id'],
+                        'video_id': video_id,
+                        'author_display_name': snippet.get('authorDisplayName', ''),
+                        'text': snippet.get('textDisplay', ''),
+                        'like_count': int(snippet.get('likeCount', 0)),
+                        'reply_count': int(item['snippet'].get('totalReplyCount', 0)),
+                        'published_at': snippet.get('publishedAt', ''),
+                    })
+
+                next_page_token = response.get('nextPageToken')
+                if not next_page_token:
+                    break
+
+            except HttpError as e:
+                if e.resp.status == 403:
+                    log.info("Comentarios deshabilitados para video %s", video_id)
+                    return []
+                log.error("Error extrayendo comentarios de %s: %s", video_id, e)
+                return comments
+
+        return comments
+
     def _parse_duration(self, duration_str: str) -> int:
         """
         Convierte formato ISO 8601 de duración a segundos

@@ -9,15 +9,38 @@ Análisis de miniaturas de YouTube con Claude Vision (Mejora 8.x).
 """
 import json
 import logging
+import os
+import re
 import time
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from anthropic import Anthropic
 from retry_config import retry_anthropic
 
+if TYPE_CHECKING:
+    from database import YouTubeDatabase
+
 log = logging.getLogger(__name__)
 
+ANTHROPIC_MODEL = os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-6')
+
 THUMBNAIL_URL_TEMPLATE = "https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+
+
+def _clean_json_response(raw: str) -> dict:
+    """Extrae y parsea JSON de una respuesta de Claude, limpiando markdown."""
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+    # Fallback: buscar JSON con regex si el strip no fue suficiente
+    if not cleaned.startswith("{") and not cleaned.startswith("["):
+        match = re.search(r'\{[\s\S]*\}', cleaned)
+        if match:
+            cleaned = match.group()
+    return json.loads(cleaned)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -39,7 +62,7 @@ class ThumbnailScorer:
     def _call_vision(self, thumbnail_url: str) -> str:
         """Envía la miniatura a Claude Vision y retorna el texto de respuesta."""
         message = self.client.messages.create(
-            model="claude-sonnet-4-6",
+            model=ANTHROPIC_MODEL,
             max_tokens=800,
             messages=[{
                 "role": "user",
@@ -93,24 +116,14 @@ class ThumbnailScorer:
         url = self.get_thumbnail_url(video_id)
         try:
             raw = self._call_vision(url)
-            # Limpiar posibles bloques markdown
-            cleaned = raw.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned
-                if cleaned.endswith("```"):
-                    cleaned = cleaned[:-3]
-                cleaned = cleaned.strip()
-            result = json.loads(cleaned)
+            result = _clean_json_response(raw)
             result['video_id'] = video_id
             return result
-        except json.JSONDecodeError:
-            log.warning("Respuesta no-JSON para %s: %s", video_id, raw[:200])
-            return None
-        except Exception as e:
-            log.error("Error analizando thumbnail de %s: %s", video_id, e)
+        except (json.JSONDecodeError, TypeError, KeyError) as e:
+            log.warning("Error parseando respuesta de thumbnail %s: %s", video_id, e)
             return None
 
-    def analyze_channel(self, channel_id: str, db, max_per_run: int = 50) -> List[Dict]:
+    def analyze_channel(self, channel_id: str, db: 'YouTubeDatabase', max_per_run: int = 50) -> List[Dict]:
         """
         Analiza thumbnails pendientes de un canal.
 
@@ -192,7 +205,7 @@ class ThumbnailComparator:
         })
 
         message = self.client.messages.create(
-            model="claude-sonnet-4-6",
+            model=ANTHROPIC_MODEL,
             max_tokens=1000,
             messages=[{"role": "user", "content": content_blocks}],
         )
@@ -217,16 +230,7 @@ class ThumbnailComparator:
 
         try:
             raw = self._call_vision_compare(images)
-            cleaned = raw.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned
-                if cleaned.endswith("```"):
-                    cleaned = cleaned[:-3]
-                cleaned = cleaned.strip()
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
-            log.warning("Respuesta no-JSON en comparación: %s", raw[:200])
-            return None
-        except Exception as e:
-            log.error("Error comparando thumbnails: %s", e)
+            return _clean_json_response(raw)
+        except (json.JSONDecodeError, TypeError, KeyError) as e:
+            log.warning("Error parseando comparación de thumbnails: %s", e)
             return None

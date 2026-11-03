@@ -19,6 +19,8 @@ from telegram_notifier import TelegramNotifier
 from series_detector import SeriesDetector
 from revenue_analyzer import EvergreenDetector
 from thumbnail_analyzer import ThumbnailScorer
+from comment_analyzer import CommentAnalyzer
+from datetime import datetime
 
 log = logging.getLogger('pipeline')
 
@@ -43,7 +45,36 @@ def _validate_config():
 
     max_videos = int(os.getenv('MAX_VIDEOS_PER_CHANNEL', '200'))
 
-    log.info("Configuración cargada — Canales: %d | Máx. videos por canal: %d", len(channel_ids), max_videos)
+    # Validar conexión a base de datos
+    db_host = os.getenv('DB_HOST', 'localhost')
+    db_port = os.getenv('DB_PORT', '3306')
+    db_name = os.getenv('DB_NAME', 'youtube_analytics')
+    db_user = os.getenv('DB_USER', 'root')
+
+    if not os.getenv('DB_PASSWORD'):
+        log.warning("DB_PASSWORD no configurada — usando valor vacío")
+
+    try:
+        import pymysql
+        conn = pymysql.connect(
+            host=db_host,
+            port=int(db_port),
+            user=db_user,
+            password=os.getenv('DB_PASSWORD', ''),
+            database=db_name,
+            connect_timeout=5,
+        )
+        conn.close()
+        log.info("Conexión a BD verificada — %s@%s:%s/%s", db_user, db_host, db_port, db_name)
+    except Exception as e:
+        log.error("No se pudo conectar a la base de datos: %s", e)
+        log.error("Verifica DB_HOST, DB_PORT, DB_USER, DB_PASSWORD y DB_NAME en .env")
+        return None
+
+    # Validar modelo de Anthropic (informativo)
+    model = os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-6')
+    log.info("Configuración cargada — Canales: %d | Máx. videos: %d | Modelo: %s",
+             len(channel_ids), max_videos, model)
     return youtube_api_key, anthropic_api_key, channel_ids, max_videos
 
 
@@ -125,7 +156,8 @@ def _log_recommendation(recommendation):
     log.info("  🎯 RECOMENDACIÓN PARA MAÑANA")
     log.info("  " + "=" * 56)
     log.info("  📅 Fecha: %s", recommendation['recommendation_date'])
-    log.info("  🎬 Formato: %s", recommendation['recommended_type'])
+    _rtype = recommendation['recommended_type']
+    log.info("  🎬 Formato: %s (%s)", _rtype, '9:16' if _rtype == 'Short' else '16:9')
     log.info("  📊 Performance esperado: %s", recommendation['predicted_performance'])
     log.info("  💡 Análisis completo:")
     log.info("  " + "-" * 56)
@@ -165,7 +197,8 @@ def _analyze_channel(analyzer, channel_id, channel_videos, notifier=None):
 
     with YouTubeDatabase() as db:
         # Vincular el video publicado más reciente a recomendaciones anteriores pendientes
-        channel_avg_views = float(channel_videos['view_count'].mean()) if not channel_videos.empty else 0.0
+        _avg = channel_videos['view_count'].mean() if not channel_videos.empty and 'view_count' in channel_videos.columns else 0
+        channel_avg_views = float(_avg) if pd.notna(_avg) else 0.0
         linked = db.link_video_to_recommendation(channel_id, channel_avg_views)
         if linked:
             log.info("  🔗 %d recomendación(es) vinculadas con videos publicados", linked)
@@ -216,7 +249,7 @@ def _step_competitors(extractor, max_videos_per_channel: int):
     """Extrae datos de canales competidores (solo Data API pública)."""
     raw = os.getenv('COMPETITOR_CHANNEL_IDS', '').strip()
     if not raw:
-        log.warning("Sin competidores configurados — agrega COMPETITOR_CHANNEL_IDS en .env")
+        log.info("Sin competidores configurados (opcional — agrega COMPETITOR_CHANNEL_IDS en .env)")
         return
 
     competitor_ids = [cid.strip() for cid in raw.split(',') if cid.strip()]
@@ -328,7 +361,8 @@ def _step_competitor_alerts(analyzer, notifier):
             if sent:
                 log.info("  📨 Alerta enviada por Telegram")
                 with YouTubeDatabase() as db:
-                    db.conn.cursor().execute(
+                    _cur = db.conn.cursor()
+                    _cur.execute(
                         "UPDATE competitor_alerts SET notified = 1 WHERE video_id = %s",
                         (video_id,),
                     )
@@ -479,25 +513,96 @@ def _step_thumbnail_analysis(anthropic_api_key: str):
     with YouTubeDatabase() as db:
         own_channels = db.get_own_channels()
 
-    if own_channels.empty:
-        log.info("  Sin canales propios para analizar")
-        return
+        if own_channels.empty:
+            log.info("  Sin canales propios para analizar")
+            return
 
-    total_analyzed = 0
-    for _, ch in own_channels.iterrows():
-        channel_id = ch['channel_id']
-        with YouTubeDatabase() as db:
+        total_analyzed = 0
+        for _, ch in own_channels.iterrows():
+            channel_id = ch['channel_id']
             results = scorer.analyze_channel(channel_id, db, max_per_run=max_per_run)
 
-        if not results:
+            if not results:
+                continue
+
+            avg_click = sum(r.get('clickability', 0) for r in results) / len(results)
+            log.info("  🖼 %s: %d thumbnails analizadas (clickability prom: %.1f)",
+                     ch.get('channel_name', channel_id), len(results), avg_click)
+            total_analyzed += len(results)
+
+        log.info("  Thumbnails analizadas: %d", total_analyzed)
+
+
+def _step_comment_analysis(youtube_api_key: str, anthropic_api_key: str):
+    """Extrae y analiza comentarios de videos recientes (Mejora 11.x)."""
+    log.info("PASO COMENTARIOS: Extrayendo y analizando comentarios...")
+
+    max_comments = int(os.getenv('MAX_COMMENTS_PER_VIDEO', '100'))
+    max_videos = int(os.getenv('MAX_COMMENT_VIDEOS_PER_RUN', '20'))
+
+    extractor = YouTubeDataExtractor(youtube_api_key)
+    analyzer = CommentAnalyzer(anthropic_api_key)
+
+    with YouTubeDatabase() as db:
+        own_channels = db.get_own_channels()
+
+    if own_channels.empty:
+        log.info("  Sin canales propios para analizar comentarios")
+        return
+
+    total_comments = 0
+    total_analyzed = 0
+
+    for _, ch in own_channels.iterrows():
+        channel_id = ch['channel_id']
+        channel_name = ch.get('channel_name', channel_id)
+
+        with YouTubeDatabase() as db:
+            videos_to_analyze = db.get_videos_without_comments(channel_id, limit=max_videos)
+
+        if videos_to_analyze.empty:
+            log.info("  %s: sin videos pendientes de análisis de comentarios", channel_name)
             continue
 
-        avg_click = sum(r.get('clickability', 0) for r in results) / len(results)
-        log.info("  🖼 %s: %d thumbnails analizadas (clickability prom: %.1f)",
-                 ch.get('channel_name', channel_id), len(results), avg_click)
-        total_analyzed += len(results)
+        log.info("  %s: analizando comentarios de %d videos", channel_name, len(videos_to_analyze))
 
-    log.info("  Thumbnails analizadas: %d", total_analyzed)
+        all_comments = []
+        for _, video in videos_to_analyze.iterrows():
+            video_id = video['video_id']
+            comments = extractor.get_video_comments(video_id, max_results=max_comments)
+            if not comments:
+                continue
+
+            # Añadir channel_id y fetched_at
+            now = datetime.now().isoformat()
+            for c in comments:
+                c['channel_id'] = channel_id
+                c['fetched_at'] = now
+
+            with YouTubeDatabase() as db:
+                db.save_video_comments(comments)
+            all_comments.extend(comments)
+            total_comments += len(comments)
+            log.debug("    Video %s: %d comentarios extraídos", video_id, len(comments))
+
+        if not all_comments:
+            continue
+
+        # Clasificar sentimiento
+        sentiments = analyzer.classify_sentiment_batch(all_comments)
+        with YouTubeDatabase() as db:
+            db.save_comment_sentiments(sentiments)
+        total_analyzed += len(sentiments)
+
+        # Detectar FAQ topics
+        faq_topics = analyzer.extract_faq_topics(all_comments, channel_id)
+        if faq_topics:
+            with YouTubeDatabase() as db:
+                db.save_faq_topics(channel_id, faq_topics)
+            log.info("    FAQ: %d temas detectados", len(faq_topics))
+
+    log.info("  Comentarios extraídos: %d | Sentimientos clasificados: %d",
+             total_comments, total_analyzed)
 
 
 def _step4_analytics(videos_df, channel_ids):
@@ -591,6 +696,9 @@ def main():
 
         # Análisis de thumbnails con Claude Vision (Mejora 8.x)
         _step_thumbnail_analysis(anthropic_api_key)
+
+        # Análisis de comentarios y sentimiento (Mejora 11.x)
+        _step_comment_analysis(youtube_api_key, anthropic_api_key)
 
         _step3_analyze(analyzer, videos_df, channel_ids, notifier=notifier)
 

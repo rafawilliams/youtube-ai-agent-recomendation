@@ -15,6 +15,7 @@ from retry_config import retry_anthropic
 
 log = logging.getLogger(__name__)
 
+ANTHROPIC_MODEL = os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-6')
 PANAMA_TZ = pytz.timezone('America/Panama')
 
 
@@ -319,8 +320,8 @@ class AIAnalyzer:
                     for i, day_label in enumerate(weekday_labels):
                         weight = 0.5 + 0.5 * (interest_norm.iloc[i] / 100)
                         opportunity.loc[day_label] = (opportunity.loc[day_label] * weight).round(0)
-            except Exception:
-                pass
+            except (ImportError, KeyError, ValueError, TypeError) as e:
+                log.debug("Trends weighting skipped: %s", e)
 
         # Extraer top 5 oportunidades
         recommendations = []
@@ -572,7 +573,7 @@ OBJETIVO: Maximizar audiencia y ganar nuevos suscriptores
 
 Por favor genera una recomendación ESPECÍFICA para el contenido que debería publicar MAÑANA. La recomendación debe incluir:
 
-1. FORMATO RECOMENDADO: ¿Short o Video Largo? (Basado en datos)
+1. FORMATO RECOMENDADO: ¿Short (9:16) o Video Largo (16:9)? (Basado en datos)
 2. TEMA/TIPO DE CONTENIDO: Qué tipo de contenido específico recomiendas (basado en lo que ha funcionado)
 3. RAZÓN: Por qué esta es la mejor opción basándose en los datos
 4. PREDICCIÓN: Cómo esperas que performe en comparación con el promedio
@@ -608,13 +609,14 @@ Sé ESPECÍFICO y basado en DATOS. No des recomendaciones genéricas."""
         try:
             return self._call_claude_with_retry(prompt, max_tokens)
         except Exception as e:
+            log.error("Error en llamada a Claude: %s", e)
             return f"Error al generar análisis: {str(e)}"
 
     @retry_anthropic
     def _call_claude_with_retry(self, prompt: str, max_tokens: int) -> str:
         """Llamada interna a Claude protegida con retry."""
         message = self.client.messages.create(
-            model="claude-sonnet-4-6",
+            model=ANTHROPIC_MODEL,
             max_tokens=max_tokens,
             messages=[
                 {"role": "user", "content": prompt}
@@ -706,6 +708,7 @@ Sé ESPECÍFICO y basado en DATOS. No des recomendaciones genéricas."""
         videos_df: pd.DataFrame,
         channel_info: Dict,
         past_results: Optional[List[Dict]] = None,
+        language: str = 'es',
     ) -> Dict:
         """
         Genera un plan de contenido para los próximos 7 días.
@@ -744,13 +747,19 @@ Sé ESPECÍFICO y basado en DATOS. No des recomendaciones genéricas."""
         # Calcular los próximos 7 días a partir de mañana
         today     = datetime.now(PANAMA_TZ).date()
         next_days = [today + timedelta(days=i) for i in range(1, 8)]
-        day_names = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+        if language == 'en':
+            day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        elif language == 'pt':
+            day_names = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo']
+        else:
+            day_names = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
 
         prompt = self._create_weekly_plan_prompt(
             stats, trends, best_performers, channel_info,
             next_days, day_names, past_results or [],
             cadence_insights=cadence_insights,
             hourly_insights=hourly_insights,
+            language=language,
         )
 
         raw = self._call_claude(prompt, max_tokens=3000)
@@ -770,6 +779,7 @@ Sé ESPECÍFICO y basado en DATOS. No des recomendaciones genéricas."""
         past_results: List[Dict],
         cadence_insights: Optional[Dict] = None,
         hourly_insights: Optional[Dict] = None,
+        language: str = 'es',
     ) -> str:
         """Crea el prompt para el plan semanal. Pide respuesta en JSON estricto."""
         best_videos_text = "\n".join([
@@ -847,7 +857,8 @@ RESPONDE ÚNICAMENTE con un JSON válido con esta estructura (sin markdown, sin 
   ]
 }}
 
-Incluye exactamente 7 objetos en "days", uno por cada día listado arriba."""
+Incluye exactamente 7 objetos en "days", uno por cada día listado arriba.
+{f'CRITICAL: Write ALL text fields (strategy, topic, reason) in English.' if language == 'en' else ('CRÍTICO: Escribe todos los campos de texto (strategy, topic, reason) en portugués.' if language == 'pt' else '')}"""
 
     def _parse_weekly_plan(self, raw: str, next_days: list, day_names: List[str]) -> Dict:
         """

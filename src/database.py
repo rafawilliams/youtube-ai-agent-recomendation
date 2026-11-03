@@ -109,7 +109,7 @@ class YouTubeDatabase:
                 ALTER TABLE recommendations ADD COLUMN title_suggestions TEXT AFTER predicted_performance
             """)
             self.conn.commit()
-        except Exception:
+        except pymysql.err.OperationalError:
             log.debug("Migración: columna title_suggestions ya existe")
 
         # Migración: agregar columna is_competitor a channels (para BDs existentes)
@@ -118,7 +118,7 @@ class YouTubeDatabase:
                 ALTER TABLE channels ADD COLUMN is_competitor TINYINT(1) NOT NULL DEFAULT 0 AFTER view_count
             """)
             self.conn.commit()
-        except Exception:
+        except pymysql.err.OperationalError:
             log.debug("Migración: columna is_competitor ya existe")
 
         # Migración: agregar content_category a videos (para BDs existentes — 12.2)
@@ -127,7 +127,7 @@ class YouTubeDatabase:
                 ALTER TABLE videos ADD COLUMN content_category VARCHAR(50) DEFAULT NULL AFTER category_id
             """)
             self.conn.commit()
-        except Exception:
+        except pymysql.err.OperationalError:
             log.debug("Migración: columna content_category ya existe")
 
         cursor.execute("""
@@ -377,11 +377,55 @@ class YouTubeDatabase:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS video_comments (
+                comment_id VARCHAR(255) PRIMARY KEY,
+                video_id VARCHAR(255) NOT NULL,
+                channel_id VARCHAR(255) NOT NULL,
+                author_display_name VARCHAR(500),
+                text TEXT NOT NULL,
+                like_count INT DEFAULT 0,
+                reply_count INT DEFAULT 0,
+                sentiment VARCHAR(20) DEFAULT NULL,
+                published_at VARCHAR(50),
+                fetched_at VARCHAR(50) NOT NULL,
+                FOREIGN KEY (video_id) REFERENCES videos(video_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS comment_faq_topics (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                channel_id VARCHAR(255) NOT NULL,
+                topic VARCHAR(500) NOT NULL,
+                sample_questions TEXT,
+                frequency INT DEFAULT 1,
+                extracted_at VARCHAR(50) NOT NULL,
+                FOREIGN KEY (channel_id) REFERENCES channels(channel_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
         # Índices (ignorar error si ya existen)
         for sql in [
             "CREATE INDEX idx_videos_channel ON videos(channel_id)",
             "CREATE INDEX idx_metrics_video ON video_metrics(video_id, recorded_at(20))",
             "CREATE INDEX idx_recommendations_channel ON recommendations(channel_id, recommendation_date(20))",
+            # Índices adicionales para queries frecuentes
+            "CREATE INDEX idx_video_analytics_video ON video_analytics(video_id)",
+            "CREATE INDEX idx_video_analytics_channel ON video_analytics(channel_id)",
+            "CREATE INDEX idx_traffic_sources_recorded ON traffic_sources(channel_id, recorded_at(20))",
+            "CREATE INDEX idx_virality_channel ON virality_predictions(channel_id)",
+            "CREATE INDEX idx_view_pred_channel ON view_predictions(channel_id)",
+            "CREATE INDEX idx_retention_channel ON retention_predictions(channel_id)",
+            "CREATE INDEX idx_series_episodes_series ON series_episodes(series_id)",
+            "CREATE INDEX idx_evergreen_channel ON evergreen_scores(channel_id)",
+            "CREATE INDEX idx_thumbnail_scores_channel ON thumbnail_scores(channel_id)",
+            "CREATE INDEX idx_competitor_alerts_channel ON competitor_alerts(channel_id, created_at(20))",
+            "CREATE INDEX idx_videos_published ON videos(published_at(20))",
+            "CREATE INDEX idx_videos_type ON videos(video_type)",
+            "CREATE INDEX idx_comments_video ON video_comments(video_id)",
+            "CREATE INDEX idx_comments_channel ON video_comments(channel_id)",
+            "CREATE INDEX idx_faq_channel ON comment_faq_topics(channel_id)",
         ]:
             try:
                 cursor.execute(sql)
@@ -423,52 +467,48 @@ class YouTubeDatabase:
         self.conn.commit()
 
     def save_videos_data(self, videos_df: pd.DataFrame):
-        """Guarda o actualiza datos de videos y sus métricas"""
+        """Guarda o actualiza datos de videos y sus métricas (batch insert)."""
         cursor = self.conn.cursor()
         current_time = datetime.now().isoformat()
 
-        for _, video in videos_df.iterrows():
-            cursor.execute("""
-                INSERT INTO videos
-                (video_id, channel_id, title, description, published_at,
-                 duration_seconds, is_short, video_type, tags, category_id, last_updated)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    title = VALUES(title),
-                    description = VALUES(description),
-                    duration_seconds = VALUES(duration_seconds),
-                    is_short = VALUES(is_short),
-                    video_type = VALUES(video_type),
-                    tags = VALUES(tags),
-                    category_id = VALUES(category_id),
-                    last_updated = VALUES(last_updated)
-            """, (
-                video['video_id'],
-                video['channel_id'],
-                video['title'],
-                video['description'],
-                video['published_at'].isoformat() if pd.notna(video['published_at']) else None,
-                video['duration_seconds'],
-                video['is_short'],
-                video['video_type'],
-                video['tags'],
-                video['category_id'],
-                current_time
-            ))
+        video_rows = [
+            (
+                row['video_id'], row['channel_id'], row['title'], row['description'],
+                row['published_at'].isoformat() if pd.notna(row['published_at']) else None,
+                row['duration_seconds'], row['is_short'], row['video_type'],
+                row['tags'], row['category_id'], current_time,
+            )
+            for _, row in videos_df.iterrows()
+        ]
+        cursor.executemany("""
+            INSERT INTO videos
+            (video_id, channel_id, title, description, published_at,
+             duration_seconds, is_short, video_type, tags, category_id, last_updated)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                title = VALUES(title),
+                description = VALUES(description),
+                duration_seconds = VALUES(duration_seconds),
+                is_short = VALUES(is_short),
+                video_type = VALUES(video_type),
+                tags = VALUES(tags),
+                category_id = VALUES(category_id),
+                last_updated = VALUES(last_updated)
+        """, video_rows)
 
-            cursor.execute("""
-                INSERT INTO video_metrics
-                (video_id, view_count, like_count, comment_count,
-                 engagement_rate, recorded_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (
-                video['video_id'],
-                video['view_count'],
-                video['like_count'],
-                video['comment_count'],
-                video['engagement_rate'],
-                current_time
-            ))
+        metric_rows = [
+            (
+                row['video_id'], row['view_count'], row['like_count'],
+                row['comment_count'], row['engagement_rate'], current_time,
+            )
+            for _, row in videos_df.iterrows()
+        ]
+        cursor.executemany("""
+            INSERT INTO video_metrics
+            (video_id, view_count, like_count, comment_count,
+             engagement_rate, recorded_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, metric_rows)
 
         self.conn.commit()
 
@@ -670,26 +710,27 @@ class YouTubeDatabase:
         }
 
     def save_virality_predictions(self, predictions_df: pd.DataFrame):
-        """Guarda o actualiza los scores de viralidad para un lote de videos."""
+        """Guarda o actualiza los scores de viralidad para un lote de videos (batch)."""
         cursor = self.conn.cursor()
         predicted_at = datetime.now().isoformat()
 
-        for _, row in predictions_df.iterrows():
-            cursor.execute("""
-                INSERT INTO virality_predictions
-                (video_id, channel_id, virality_score, predicted_at, model_features)
-                VALUES (%s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    virality_score = VALUES(virality_score),
-                    predicted_at   = VALUES(predicted_at),
-                    model_features = VALUES(model_features)
-            """, (
-                row['video_id'],
-                row['channel_id'],
-                float(row['virality_score']),
-                predicted_at,
+        rows = [
+            (
+                row['video_id'], row['channel_id'],
+                float(row['virality_score']), predicted_at,
                 row.get('model_features', None),
-            ))
+            )
+            for _, row in predictions_df.iterrows()
+        ]
+        cursor.executemany("""
+            INSERT INTO virality_predictions
+            (video_id, channel_id, virality_score, predicted_at, model_features)
+            VALUES (%s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                virality_score = VALUES(virality_score),
+                predicted_at   = VALUES(predicted_at),
+                model_features = VALUES(model_features)
+        """, rows)
 
         self.conn.commit()
 
@@ -715,28 +756,28 @@ class YouTubeDatabase:
         return pd.DataFrame(rows)
 
     def save_view_predictions(self, predictions_df: pd.DataFrame):
-        """Guarda o actualiza las predicciones de vistas para un lote de videos."""
+        """Guarda o actualiza las predicciones de vistas para un lote de videos (batch)."""
         cursor = self.conn.cursor()
         predicted_at = datetime.now().isoformat()
 
-        for _, row in predictions_df.iterrows():
-            cursor.execute("""
-                INSERT INTO view_predictions
-                (video_id, channel_id, predicted_views, predicted_low, predicted_high, predicted_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    predicted_views = VALUES(predicted_views),
-                    predicted_low   = VALUES(predicted_low),
-                    predicted_high  = VALUES(predicted_high),
-                    predicted_at    = VALUES(predicted_at)
-            """, (
-                row['video_id'],
-                row['channel_id'],
-                int(row['predicted_views']),
-                int(row['predicted_low']),
-                int(row['predicted_high']),
-                predicted_at,
-            ))
+        rows = [
+            (
+                row['video_id'], row['channel_id'],
+                int(row['predicted_views']), int(row['predicted_low']),
+                int(row['predicted_high']), predicted_at,
+            )
+            for _, row in predictions_df.iterrows()
+        ]
+        cursor.executemany("""
+            INSERT INTO view_predictions
+            (video_id, channel_id, predicted_views, predicted_low, predicted_high, predicted_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                predicted_views = VALUES(predicted_views),
+                predicted_low   = VALUES(predicted_low),
+                predicted_high  = VALUES(predicted_high),
+                predicted_at    = VALUES(predicted_at)
+        """, rows)
 
         self.conn.commit()
 
@@ -763,29 +804,13 @@ class YouTubeDatabase:
         return pd.DataFrame(rows)
 
     def save_video_analytics(self, analytics_df: pd.DataFrame):
-        """Guarda o actualiza las métricas avanzadas (Analytics API) por video."""
+        """Guarda o actualiza las métricas avanzadas (Analytics API) por video (batch)."""
         cursor = self.conn.cursor()
         recorded_at = datetime.now().isoformat()
 
-        for _, row in analytics_df.iterrows():
-            cursor.execute("""
-                INSERT INTO video_analytics
-                (video_id, channel_id, avg_view_duration_seconds, avg_view_percentage,
-                 estimated_minutes_watched, shares, subscribers_gained,
-                 impressions, impression_ctr, recorded_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    avg_view_duration_seconds = VALUES(avg_view_duration_seconds),
-                    avg_view_percentage       = VALUES(avg_view_percentage),
-                    estimated_minutes_watched = VALUES(estimated_minutes_watched),
-                    shares                    = VALUES(shares),
-                    subscribers_gained        = VALUES(subscribers_gained),
-                    impressions               = VALUES(impressions),
-                    impression_ctr            = VALUES(impression_ctr),
-                    recorded_at               = VALUES(recorded_at)
-            """, (
-                row['video_id'],
-                row['channel_id'],
+        rows = [
+            (
+                row['video_id'], row['channel_id'],
                 float(row.get('avg_view_duration_seconds', 0)),
                 float(row.get('avg_view_percentage', 0)),
                 int(row.get('estimated_minutes_watched', 0)),
@@ -794,7 +819,25 @@ class YouTubeDatabase:
                 int(row.get('impressions', 0)),
                 float(row.get('impression_ctr', 0)),
                 recorded_at,
-            ))
+            )
+            for _, row in analytics_df.iterrows()
+        ]
+        cursor.executemany("""
+            INSERT INTO video_analytics
+            (video_id, channel_id, avg_view_duration_seconds, avg_view_percentage,
+             estimated_minutes_watched, shares, subscribers_gained,
+             impressions, impression_ctr, recorded_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                avg_view_duration_seconds = VALUES(avg_view_duration_seconds),
+                avg_view_percentage       = VALUES(avg_view_percentage),
+                estimated_minutes_watched = VALUES(estimated_minutes_watched),
+                shares                    = VALUES(shares),
+                subscribers_gained        = VALUES(subscribers_gained),
+                impressions               = VALUES(impressions),
+                impression_ctr            = VALUES(impression_ctr),
+                recorded_at               = VALUES(recorded_at)
+        """, rows)
 
         self.conn.commit()
 
@@ -825,28 +868,29 @@ class YouTubeDatabase:
         return pd.DataFrame(rows)
 
     def save_traffic_sources(self, traffic_df: pd.DataFrame):
-        """Guarda o actualiza las fuentes de tráfico del canal."""
+        """Guarda o actualiza las fuentes de tráfico del canal (batch)."""
         cursor = self.conn.cursor()
         recorded_at = datetime.now().isoformat()
 
-        for _, row in traffic_df.iterrows():
-            cursor.execute("""
-                INSERT INTO traffic_sources
-                (channel_id, source_type, source_label, views, estimated_minutes, recorded_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    source_label      = VALUES(source_label),
-                    views             = VALUES(views),
-                    estimated_minutes = VALUES(estimated_minutes),
-                    recorded_at       = VALUES(recorded_at)
-            """, (
-                row['channel_id'],
-                row['source_type'],
+        rows = [
+            (
+                row['channel_id'], row['source_type'],
                 row.get('source_label', row['source_type']),
-                int(row['views']),
-                int(row['estimated_minutes']),
+                int(row['views']), int(row['estimated_minutes']),
                 recorded_at,
-            ))
+            )
+            for _, row in traffic_df.iterrows()
+        ]
+        cursor.executemany("""
+            INSERT INTO traffic_sources
+            (channel_id, source_type, source_label, views, estimated_minutes, recorded_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                source_label      = VALUES(source_label),
+                views             = VALUES(views),
+                estimated_minutes = VALUES(estimated_minutes),
+                recorded_at       = VALUES(recorded_at)
+        """, rows)
 
         self.conn.commit()
 
@@ -1226,23 +1270,25 @@ class YouTubeDatabase:
     # ------------------------------------------------------------------
 
     def save_retention_predictions(self, predictions_df: pd.DataFrame):
-        """Guarda predicciones de retención para los videos."""
+        """Guarda predicciones de retención para los videos (batch)."""
         cursor = self.conn.cursor()
         now = datetime.now().isoformat()
-        for _, row in predictions_df.iterrows():
-            cursor.execute("""
-                INSERT INTO retention_predictions
-                (video_id, channel_id, predicted_retention, predicted_at)
-                VALUES (%s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    predicted_retention = VALUES(predicted_retention),
-                    predicted_at = VALUES(predicted_at)
-            """, (
-                row['video_id'],
-                row['channel_id'],
-                float(row['predicted_retention']),
-                now,
-            ))
+
+        rows = [
+            (
+                row['video_id'], row['channel_id'],
+                float(row['predicted_retention']), now,
+            )
+            for _, row in predictions_df.iterrows()
+        ]
+        cursor.executemany("""
+            INSERT INTO retention_predictions
+            (video_id, channel_id, predicted_retention, predicted_at)
+            VALUES (%s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                predicted_retention = VALUES(predicted_retention),
+                predicted_at = VALUES(predicted_at)
+        """, rows)
         self.conn.commit()
 
     def get_retention_predictions(self, channel_id: str) -> pd.DataFrame:
@@ -1354,14 +1400,13 @@ class YouTubeDatabase:
         return cursor.lastrowid
 
     def get_latest_health_report(self, channel_id: str) -> dict | None:
-        """Retorna el reporte de salud más reciente (últimas 24 h) o None."""
+        """Retorna el reporte de salud más reciente (sin límite de antigüedad) o None."""
         cursor = self.conn.cursor()
         cursor.execute(
             """
             SELECT id, health_score, metrics_json, ai_diagnosis, created_at
             FROM channel_health_reports
             WHERE channel_id = %s
-              AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
             ORDER BY id DESC
             LIMIT 1
             """,
@@ -1521,12 +1566,10 @@ class YouTubeDatabase:
             ))
             self.conn.commit()
             return True
-        except Exception as e:
+        except pymysql.err.IntegrityError:
             self.conn.rollback()
-            if 'Duplicate' in str(e):
-                log.debug("Alerta ya existe para video %s", alert['video_id'])
-                return False
-            raise
+            log.debug("Alerta ya existe para video %s", alert['video_id'])
+            return False
 
     def get_competitor_alerts(self, limit: int = 20) -> pd.DataFrame:
         """Retorna las últimas alertas de competidores."""
@@ -1591,7 +1634,7 @@ class YouTubeDatabase:
             """, (series['channel_id'], series['series_name']))
             row = cursor.fetchone()
             return row['series_id'] if row else 0
-        except Exception as e:
+        except pymysql.err.DatabaseError as e:
             self.conn.rollback()
             log.warning("Error guardando serie: %s", e)
             raise
@@ -1609,10 +1652,8 @@ class YouTubeDatabase:
                     episode_number = VALUES(episode_number)
             """, (series_id, video_id, episode_number, datetime.now().isoformat()))
             self.conn.commit()
-        except Exception as e:
+        except pymysql.err.IntegrityError:
             self.conn.rollback()
-            if 'Duplicate' not in str(e):
-                raise
 
     def get_all_series(self, channel_id: str = None) -> pd.DataFrame:
         """Retorna todas las series, opcionalmente filtradas por canal."""
@@ -1689,7 +1730,7 @@ class YouTubeDatabase:
                 now,
             ))
             self.conn.commit()
-        except Exception as e:
+        except pymysql.err.DatabaseError as e:
             self.conn.rollback()
             log.warning("Error guardando evergreen score: %s", e)
             raise
@@ -1769,7 +1810,7 @@ class YouTubeDatabase:
                 now,
             ))
             self.conn.commit()
-        except Exception as e:
+        except pymysql.err.DatabaseError as e:
             log.error("Error guardando thumbnail score para %s: %s",
                       data.get('video_id'), e)
             self.conn.rollback()
@@ -1834,7 +1875,7 @@ class YouTubeDatabase:
             ))
             self.conn.commit()
             return cursor.lastrowid
-        except Exception as e:
+        except pymysql.err.DatabaseError as e:
             log.error("Error guardando comparación de thumbnails: %s", e)
             self.conn.rollback()
             return None
@@ -1847,6 +1888,155 @@ class YouTubeDatabase:
             WHERE channel_id = %s
             ORDER BY created_at DESC
             LIMIT 20
+        """, (channel_id,))
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    # ------------------------------------------------------------------
+    # Comentarios y FAQ (Mejora 11.x)
+    # ------------------------------------------------------------------
+
+    def save_video_comments(self, comments: list[dict]):
+        """Guarda comentarios de video en batch (INSERT IGNORE)."""
+        if not comments:
+            return
+        cursor = self.conn.cursor()
+        sql = """INSERT IGNORE INTO video_comments
+                 (comment_id, video_id, channel_id, author_display_name,
+                  text, like_count, reply_count, published_at, fetched_at)
+                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+        rows = [
+            (c['comment_id'], c['video_id'], c['channel_id'],
+             c.get('author_display_name', '')[:500],
+             c['text'], c.get('like_count', 0), c.get('reply_count', 0),
+             c.get('published_at', ''), c['fetched_at'])
+            for c in comments
+        ]
+        cursor.executemany(sql, rows)
+        self.conn.commit()
+        log.debug("Comentarios guardados: %d", len(rows))
+
+    def save_comment_sentiments(self, sentiments: list[dict]):
+        """Actualiza el campo sentiment de comentarios existentes."""
+        if not sentiments:
+            return
+        cursor = self.conn.cursor()
+        sql = "UPDATE video_comments SET sentiment = %s WHERE comment_id = %s"
+        rows = [(s['sentiment'], s['comment_id']) for s in sentiments]
+        cursor.executemany(sql, rows)
+        self.conn.commit()
+        log.debug("Sentimientos actualizados: %d", len(rows))
+
+    def save_faq_topics(self, channel_id: str, topics: list[dict]):
+        """Guarda temas FAQ detectados (REPLACE para actualizar)."""
+        if not topics:
+            return
+        cursor = self.conn.cursor()
+        # Limpiar topics anteriores del canal
+        cursor.execute("DELETE FROM comment_faq_topics WHERE channel_id = %s", (channel_id,))
+        sql = """INSERT INTO comment_faq_topics
+                 (channel_id, topic, sample_questions, frequency, extracted_at)
+                 VALUES (%s, %s, %s, %s, %s)"""
+        rows = [
+            (channel_id, t['topic'], t.get('sample_questions', ''),
+             t.get('frequency', 1), t['extracted_at'])
+            for t in topics
+        ]
+        cursor.executemany(sql, rows)
+        self.conn.commit()
+        log.debug("FAQ topics guardados para %s: %d", channel_id, len(rows))
+
+    def get_video_comments(self, video_id: str) -> pd.DataFrame:
+        """Obtiene todos los comentarios de un video."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM video_comments WHERE video_id = %s ORDER BY like_count DESC",
+            (video_id,),
+        )
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def get_channel_comment_stats(self, channel_id: str) -> dict:
+        """Obtiene estadísticas de comentarios del canal."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total_comments,
+                SUM(CASE WHEN sentiment = 'positivo' THEN 1 ELSE 0 END) as positive,
+                SUM(CASE WHEN sentiment = 'negativo' THEN 1 ELSE 0 END) as negative,
+                SUM(CASE WHEN sentiment = 'neutro' THEN 1 ELSE 0 END) as neutral,
+                SUM(CASE WHEN sentiment IS NULL THEN 1 ELSE 0 END) as unclassified
+            FROM video_comments
+            WHERE channel_id = %s
+        """, (channel_id,))
+        row = cursor.fetchone()
+        return row if row else {'total_comments': 0, 'positive': 0, 'negative': 0, 'neutral': 0, 'unclassified': 0}
+
+    def get_top_commenters(self, channel_id: str, top_n: int = 20) -> pd.DataFrame:
+        """Obtiene los top N comentaristas del canal."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT
+                author_display_name,
+                COUNT(*) as comment_count,
+                SUM(like_count) as total_likes,
+                GROUP_CONCAT(DISTINCT sentiment) as sentiments,
+                MAX(published_at) as last_comment_at
+            FROM video_comments
+            WHERE channel_id = %s AND author_display_name != ''
+            GROUP BY author_display_name
+            ORDER BY comment_count DESC
+            LIMIT %s
+        """, (channel_id, top_n))
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def get_faq_topics(self, channel_id: str) -> pd.DataFrame:
+        """Obtiene FAQ topics del canal."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM comment_faq_topics WHERE channel_id = %s ORDER BY frequency DESC",
+            (channel_id,),
+        )
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def get_videos_without_comments(self, channel_id: str, limit: int = 20) -> pd.DataFrame:
+        """Obtiene videos del canal que aún no tienen comentarios extraídos."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT v.video_id, v.title, v.published_at, m.comment_count
+            FROM videos v
+            LEFT JOIN (
+                SELECT video_id, comment_count,
+                       ROW_NUMBER() OVER (PARTITION BY video_id ORDER BY recorded_at DESC) as rn
+                FROM video_metrics
+            ) m ON v.video_id = m.video_id AND m.rn = 1
+            WHERE v.channel_id = %s
+              AND m.comment_count > 0
+              AND v.video_id NOT IN (
+                  SELECT DISTINCT video_id FROM video_comments WHERE channel_id = %s
+              )
+            ORDER BY v.published_at DESC
+            LIMIT %s
+        """, (channel_id, channel_id, limit))
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def get_comment_sentiment_over_time(self, channel_id: str) -> pd.DataFrame:
+        """Obtiene sentimiento de comentarios agrupado por mes."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT
+                DATE_FORMAT(STR_TO_DATE(published_at, '%%Y-%%m-%%dT%%H:%%i:%%s'), '%%Y-%%m') as month,
+                COUNT(*) as total,
+                SUM(CASE WHEN sentiment = 'positivo' THEN 1 ELSE 0 END) as positive,
+                SUM(CASE WHEN sentiment = 'negativo' THEN 1 ELSE 0 END) as negative,
+                SUM(CASE WHEN sentiment = 'neutro' THEN 1 ELSE 0 END) as neutral
+            FROM video_comments
+            WHERE channel_id = %s AND sentiment IS NOT NULL
+            GROUP BY month
+            ORDER BY month
         """, (channel_id,))
         rows = cursor.fetchall()
         return pd.DataFrame(rows) if rows else pd.DataFrame()
