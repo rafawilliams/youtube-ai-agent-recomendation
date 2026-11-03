@@ -27,3 +27,7 @@ topic: sdd
 - **Escritorio:** pipeline desde la app, bandeja, notificaciones nativas e inicio con Windows. La app es dueña de la ejecución programada mientras está viva y sustituye a `scheduler.py`.
 - **Navegación:** reorganizada por tareas (6 áreas propuestas, a validar en `clarify`). *Opción descartada:* mismas páginas con otro aspecto.
 - **Dirección técnica (diferida a `plan`):** Tauri + API local en Python, que también cubre la mejora 18.1. *Opciones descartadas:* sidecar por stdio (protocolo propio); Rust leyendo la BD (duplica lógica fuera de `src/`, choca con el principio 11).
+
+## 2026-11-02 — Spec `desktop-app`: Telegram fuera de alcance
+
+- Telegram no forma parte de esta mejora. La app no lo toca ni lo sustituye. *Por qué:* petición del propietario al revisar la spec.

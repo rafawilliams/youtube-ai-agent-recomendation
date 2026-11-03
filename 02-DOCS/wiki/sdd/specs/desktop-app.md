@@ -19,7 +19,7 @@ status: draft
 Hoy, para usar la herramienta, el propietario abre una terminal, arranca el dashboard, va al
 navegador y deja otra terminal bloqueada con el scheduler. No hay nada que viva en el escritorio.
 Cuando el pipeline termina, falla o detecta algo (alertas de competencia, despegues tardíos), no se
-entera hasta que abre el dashboard o mira Telegram. Además, la interfaz son 24 vistas en una sola
+entera hasta que abre el dashboard. Además, la interfaz son 24 vistas en una sola
 lista larga del sidebar, ordenadas por cómo se construyeron y no por lo que él hace con ellas
 (planificar, analizar, vigilar a la competencia). Y el aspecto es el genérico de Streamlit.
 
@@ -27,7 +27,7 @@ lista larga del sidebar, ordenadas por cómo se construyeron y no por lo que él
 
 Moderado, y solo lo paga el propietario. Sigue con el ritual de terminal, navegador y terminal, y
 con un scheduler que muere al cerrar esa terminal, así que las ejecuciones programadas se pierden
-sin aviso. Encontrar una vista entre 24 sigue costando, y las alertas solo llegan por Telegram. No
+sin aviso. Encontrar una vista entre 24 sigue costando, y no hay avisos en el escritorio. No
 hay coste para terceros: es una herramienta personal.
 
 ## The cheapest alternative
@@ -61,6 +61,7 @@ motivos declarados. Por eso no bastan.
 - macOS y Linux.
 - Acceso remoto o desde el móvil.
 - Integración con Notion (14.2) y autenticación del dashboard.
+- Telegram. Esta mejora no lo toca, no lo sustituye ni lo configura: sigue como está hoy.
 
 ## Users & context
 
@@ -162,9 +163,6 @@ competidores. Lee la interfaz en español.
   comentarios, competencia, comparar canales. *Sistema*: pipeline, programación y ajustes.
   *Base:* la elección "reorganizar por tareas" y los grupos que ya existen en el sidebar.
   *Riesgo:* si el usuario piensa en otras tareas, cambia la navegación, pero no el criterio de paridad.
-- **suposición tomada** — Las notificaciones de Telegram siguen funcionando en paralelo a las de
-  Windows. *Base:* ya existen y avisan fuera del PC. *Riesgo:* avisos duplicados. Se podría añadir
-  un ajuste para elegir el canal.
 - **suposición tomada** — Las ejecuciones programadas perdidas (PC apagado o app cerrada) no se
   recuperan al volver. *Base:* es lo que pasa hoy con `scheduler.py`. *Riesgo:* si se quiere
   recuperar la última, cambia un criterio de aceptación.
@@ -183,3 +181,9 @@ competidores. Lee la interfaz en español.
 - **área no formulable** — La dirección visual del rediseño (estilo, densidad, tipo de gráficos).
   Hay una pregunta, pero aún no se puede enunciar sin una propuesta delante. La aborda `design`/`ux`
   durante `plan`.
+
+## Revisions
+
+- 2026-11-02 — Telegram sale del alcance (petición del propietario). Se elimina la suposición
+  "Telegram sigue en paralelo" y se añade a Non-goals. Se quitan también sus menciones en el
+  problema y en el coste.
