@@ -38,3 +38,16 @@ topic: sdd
 - Notificaciones añadidas: canibalización, caída de salud (≥10 puntos, ajustable), evergreen. Agrupadas por tipo y ejecución.
 - Al retirar Streamlit se retiran también `scheduler.py` y el servicio `dashboard` de docker-compose; `main.py` sigue como CLI.
 - Modo presentación = pantalla completa limpia.
+
+## 2026-11-02 — Plan `desktop-app` redactado (draft)
+
+- **Estrangulamiento:** la lógica de cada página se extrae a `src/views/` y la consumen Streamlit y la API; la paridad de cifras se cumple por construcción. *Alternativa descartada:* reescribir cada vista en la nueva UI y comparar después. *Por qué:* constitución §11 y criterio de cifras idénticas.
+- **Pipeline en subproceso** gestionado por el motor, con eventos JSONL, cancelación entre pasos y lock global en MariaDB (cubre CLI y app). *Por qué:* aislar fallos y cuelgues, y mantener `python main.py` como CLI.
+- **Detectores al pipeline:** salud (extraída de `page_modules/health.py`), despegue tardío y canibalización pasan a ser pasos para poder notificar. Tabla NotifiedEvent para distinguir lo nuevo.
+- **Sin rama ni worktree:** constitución §13 (directo a main).
+- **Abiertas:** D1 stack front-end, D2 sembrar en silencio la primera ejecución, D3 dirección visual.
+
+## 2026-11-02 — Plan `desktop-app` aprobado
+
+- D1: React + TypeScript + Vite + Tailwind + ECharts, Biome/Vitest; motor FastAPI + uvicorn → constitución v1.1.0 (§20-21). *Opciones:* Svelte + ECharts; React + Plotly.js. *Por qué:* mayor ecosistema, plantilla oficial de Tauri, ECharts deja libertad para el rediseño.
+- D2: la primera ejecución de los detectores siembra en silencio. *Por qué:* evitar avisos de todo lo ya existente.
