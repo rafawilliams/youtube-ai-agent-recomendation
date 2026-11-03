@@ -32,8 +32,14 @@ UNTRUSTED_SYSTEM_PROMPT = (
 
 
 def _comments_block(items: list) -> str:
-    """Serializa los comentarios como JSON delimitado por <comentarios>."""
-    return f"<comentarios>{json.dumps(items, ensure_ascii=False)}</comentarios>"
+    """Serializa los comentarios como JSON delimitado por <comentarios>.
+
+    `<` y `>` se escapan como \\u003c / \\u003e (sigue siendo JSON válido), así
+    un comentario no puede escribir un `</comentarios>` literal y salir del bloque.
+    """
+    payload = json.dumps(items, ensure_ascii=False)
+    payload = payload.replace("<", "\\u003c").replace(">", "\\u003e")
+    return f"<comentarios>{payload}</comentarios>"
 
 
 class CommentAnalyzer:
