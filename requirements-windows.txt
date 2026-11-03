@@ -15,7 +15,7 @@ streamlit==1.54.0
 plotly==6.5.2
 
 # AI
-anthropic==0.18.1
+anthropic>=0.84.0,<1.0.0  # 0.18.x rompe con httpx 0.28 (tests/test_dependencies.py)
 
 # Utils
 python-dotenv==1.0.0
