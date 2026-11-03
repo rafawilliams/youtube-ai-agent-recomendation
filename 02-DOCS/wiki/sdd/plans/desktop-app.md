@@ -26,9 +26,13 @@ status: approved
 - **Commits:** `tipo(ámbito): asunto`, sin gitmoji, sin `Co-Authored-By` ni pie de IA. Directo a `main`, solo con la suite verde.
 - **Secretos:** nunca en pantalla, logs de UI, notificaciones ni respuestas de la API. `.env`, `credentials.json`, `token.json` y `token_integrations.json` fuera de git.
 - **Contenido de terceros** (títulos, comentarios, descripciones): se pinta como texto, nunca como HTML sin escapar.
-- **Acceso:** la API local escucha solo en `127.0.0.1` y exige el token de sesión en cada petición.
+- **Acceso:** la API local escucha solo en `127.0.0.1` y exige el token de sesión en cada petición. El token se pasa al motor por la variable de entorno `ENGINE_TOKEN`, nunca por la línea de comandos (F13).
 - **Horario por defecto:** una ejecución diaria a las 15:00 America/Panama.
-- **Umbral de salud:** caída ≥ 10 puntos respecto al informe anterior del mismo canal (ajustable).
+- **Umbral de salud:** caída ≥ 10 puntos respecto a la puntuación diaria anterior del mismo canal (ajustable). El pipeline calcula solo la puntuación, sin llamar a Claude, y no escribe en `channel_health_reports` (F4).
+- **Parámetros de los detectores en el pipeline:** canibalización `threshold=0.80`, `max_days_apart=30`; despegue tardío con los valores por defecto de `LateBloomerDetector()` (F10).
+- **Secretos en errores:** todo texto de error que llega a PipelineRun, a los eventos, a los toasts o a la API pasa por `redact()`, que sustituye por `***` los valores de `ANTHROPIC_API_KEY`, `YOUTUBE_API_KEY`, `DB_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `ENGINE_TOKEN` y los tokens OAuth (F2).
+- **Ejecuciones perdidas:** al arrancar, el motor añade una fila `missed` por día perdido desde la última ejecución, con un máximo de 7 (F5).
+- **SQL:** el lock global y cualquier consulta nueva viven en `src/database.py` (constitución §2) (F7).
 - **Notificaciones:** como mucho una por tipo de evento y ejecución.
 - **Primera ejecución de detectores:** siembra NotifiedEvent en silencio; no notifica nada existente (D2).
 - **Front-end:** Tauri 2 + React + TypeScript strict + Vite (pnpm), Tailwind, Apache ECharts; Biome + tsc strict + vitest; clippy + fmt (constitución §20-21, v1.1.0). Motor: FastAPI + uvicorn.
@@ -67,7 +71,7 @@ status: approved
 
 - **Shell de escritorio** (interno): ciclo de vida de la app en Windows (bandeja, instancia única, autoarranque minimizado, cerrar→ocultar, salir confirmando si hay pipeline).
 - **Supervisor del motor** (interno): arranca el motor Python con el Python del sistema y la ruta del proyecto, espera su handshake (puerto + listo), lo reinicia bajo demanda y lo mata al salir sin dejar huérfanos.
-- **Notificador** (interno): convierte eventos del motor en toasts agrupados y, al pulsarlos, abre la ventana en la vista destino.
+- **Notificador** (interno): la UI agrupa los eventos y decide el texto y la ruta destino (lógica testeable con vitest); Rust solo muestra el toast y entrega la activación con el mecanismo de S1. La ventana principal se crea siempre al arrancar, oculta con `--minimized`, para que la UI exista y reciba los eventos (F6).
 - **UI** (interna): presenta los view models; no calcula nada de negocio.
 - **API local** (interna): contrato único entre la UI y Python; autentica con el token y expone vistas, jobs, pipeline, ajustes y salud.
 - **Jobs** (interno): ejecución única por clave (`pipeline`, `recommendation:<canal>`…), progreso y cancelación cooperativa.
@@ -84,7 +88,7 @@ status: approved
 
 ```text
 Supervisor → Motor (arranque)
-  spawn(python, project_dir, token) -> Ready{port} | EngineMissing{what} | EngineCrashed{log_tail}
+  spawn(python, project_dir, env{ENGINE_TOKEN}) -> Ready{port} | EngineMissing{what} | EngineCrashed{log_tail}
   - el motor escribe una línea de handshake {"ready": true, "port": N} en stdout
   - EngineMissing: Python no encontrado o falta un import (nombra el paquete)
   - postcondición al salir la app: no queda ningún proceso Python del motor ni del pipeline
@@ -107,17 +111,20 @@ Runner ↔ main.py (subproceso)
     - emite una línea JSON por evento: step_started{step}, step_done{step, summary}, finding{type, count, keys},
       run_done{status: success|failed|cancelled, last_step, error?}
     - cancelación: el runner marca la petición; main.py la consulta ENTRE pasos y termina con status=cancelled
-    - exclusión: main.py adquiere el lock global `pipeline` de MariaDB al empezar;
+    - exclusión: main.py adquiere el lock global `pipeline` de MariaDB al empezar, con `db.acquire_pipeline_lock() -> bool` y `db.release_pipeline_lock()` en `src/database.py`;
       si no lo obtiene → run_done{status: skipped, reason: already_running} (cubre CLI y app a la vez)
     - sin --events-jsonl el comportamiento CLI se mantiene (logs legibles)
 
 Detectores en el pipeline (pasos nuevos, misma lógica que hoy en la UI)
-  health_step(channel) -> HealthReport{score} ; drop = previous.score - score ≥ threshold → finding(health_drop)
+  health_step(channel) -> HealthScore{score} (tabla `channel_health_scores`, sin Claude) ; drop = previous.score - score ≥ threshold → finding(health_drop)
+  step error de credenciales -> run_done{status: failed, error: CredentialError{service: google|anthropic, reason: missing|expired, how_to_renew}}
+    - `how_to_renew` es un texto fijo en español por servicio (p. ej. borrar `token.json` y volver a autorizar)
+  redact(text: str) -> str ; se aplica a todo error antes de emitirlo, guardarlo o devolverlo
   late_bloomer_step(channel) -> [video_id] ; cannibalization_step(channel) -> [(video_a, video_b)]
   evergreen_step (existente) -> transiciones no-evergreen → evergreen → finding(evergreen)
   - "nuevo" = clave no registrada antes en NotifiedEvent para ese tipo
 
-Notificador (Rust) ← Event
+Notificador (UI agrupa y decide; Rust muestra) ← Event
   finding{type, count} -> un toast por tipo y ejecución; texto en español con el recuento
   run_done{status} -> toast terminado/fallido/cancelado (skipped no notifica, solo historial)
   activate(toast) -> muestra la ventana y navega a la vista destino del tipo
@@ -131,9 +138,9 @@ src/views/<view>.build(db, channel_id, params) -> dict serializable
 
 ### Entities
 
-- **PipelineRun** (tabla nueva): id, trigger (manual | scheduled | cli), status (running | success | failed | cancelled | skipped), started_at, finished_at (America/Panama), last_completed_step, error_message (sin secretos), findings_summary (recuento por tipo).
+- **PipelineRun** (tabla nueva): id, trigger (manual | scheduled | cli), status (running | success | failed | cancelled | skipped | missed), started_at, finished_at (America/Panama), last_completed_step, error_message (sin secretos), findings_summary (recuento por tipo).
 - **NotifiedEvent** (tabla nueva): event_type, entity_key, first_seen_at, con clave única (event_type, entity_key). Distingue "nuevo" de "ya visto".
-- **HealthReport** (tabla existente `channel_health_reports`): se escribe ahora desde el paso de pipeline, no solo desde la página.
+- **HealthScore** (tabla nueva `channel_health_scores`): channel_id, score, computed_at. La escribe el paso de pipeline. `channel_health_reports` (informes con diagnóstico IA) no cambia: sigue siendo bajo demanda desde la página (F4).
 - **Settings** (fichero `config/app_settings.json`, gestionado por el motor): schedule_hour, schedule_minute, autostart, theme, widget_order, last_channel_id, last_area, health_drop_threshold. En el primer arranque hereda tema y orden de widgets de `config/dashboard_prefs.json`, y la hora de `SCHEDULE_HOUR`/`SCHEDULE_MINUTE`.
 - **Job** (en memoria del motor): kind, key, status, progress, result/error. No sobrevive a un reinicio, y no hace falta.
 
@@ -143,7 +150,7 @@ src/views/<view>.build(db, channel_id, params) -> dict serializable
 2. El runner crea un PipelineRun (running) y lanza `main.py --run-id R --events-jsonl`.
 3. `main.py` toma el lock `pipeline`, ejecuta los pasos y emite `step_started` y `step_done`. El paso de competidores emite `finding{competitor_alert, count: 3}`.
 4. El runner actualiza el PipelineRun y reenvía cada evento al stream.
-5. La UI, aunque esté oculta, recibe el stream y lo pasa al notificador → un toast "3 alertas de competencia".
+5. La UI, que existe aunque la ventana esté oculta, recibe el stream, agrupa y pide a Rust un toast "3 alertas de competencia".
 6. `run_done{success}` → PipelineRun success + toast "Pipeline terminado".
 7. El usuario pulsa el toast de competencia → se muestra la ventana en *Audiencia y competencia › Competencia*.
 
@@ -172,6 +179,9 @@ src/views/<view>.build(db, channel_id, params) -> dict serializable
 | Cancelar entre pasos | integration | con cancelación pedida a mitad del paso 3, el paso 3 termina, el 4 no empieza, status=cancelled | pasos falsos lentos |
 | Salir con pipeline en curso | unit del shell + manual guiado | pide confirmación; confirmar → cancela y sale | — |
 | Caída de salud / canibalización / evergreen nuevos | unit (detección de "nuevo") | solo claves no vistas generan finding; la caída ≥ umbral genera health_drop | NotifiedEvent en memoria |
+| Ejecuciones perdidas (AC24) | unit (motor, reloj falso) | última ejecución hace 3 días y arranque antes de la hora → 2 filas `missed`; nunca más de 7 | reloj, BD simulada |
+| Credencial caducada (AC25) | integration | un paso que lanza el error de credenciales de Google produce `CredentialError` y el texto de renovación | cliente de Google simulado |
+| Secretos enmascarados (AC26) | unit | `redact()` sobre un traceback con la API key devuelve `***`; PipelineRun, eventos y respuestas de la API usan el texto ya redactado | — |
 | Modo presentación + Esc | unit (UI) | oculta navegación y controles; Esc restaura | — |
 | Acción IA larga sin relanzar | integration (jobs) | segundo start de la misma clave → AlreadyRunning | Anthropic simulado |
 | Motor no arranca → mensaje | unit del supervisor | import ausente → EngineMissing{paquete}; la UI lo nombra | proceso falso |
@@ -179,7 +189,7 @@ src/views/<view>.build(db, channel_id, params) -> dict serializable
 | Hora 09:30 persiste | integration | settings.update → next_scheduled = 09:30 tras reiniciar el motor | reloj |
 
 - **Línea e2e:** solo smoke (arranque, instancia única, una vista, BD caída), si el spike S2 confirma que es viable automatizar la app en Windows. Bandeja, autoarranque y toasts se verifican con una **lista manual guiada** en `verify`, porque dependen del shell de Windows.
-- **Siempre real:** MariaDB en los tests de integración de NotifiedEvent/PipelineRun y del lock (BD de pruebas aparte; nunca la de producción). Las APIs de Anthropic y Google siempre simuladas (constitución §7).
+- **Siempre real:** MariaDB en los tests de integración de NotifiedEvent/PipelineRun y del lock (BD de pruebas aparte; nunca la de producción), permitido por la constitución §22 (v1.2.0). Las APIs de Anthropic y Google siempre simuladas.
 - **Antes de extraer cada vista:** un test de caracterización fija las cifras actuales de su cálculo, y después se mueve el código.
 
 ## 6. Sequencing & dependencies
@@ -200,6 +210,7 @@ src/views/<view>.build(db, channel_id, params) -> dict serializable
 12. **Retirada** — borrar `dashboard.py`, `page_modules/`, `scheduler.py`, el servicio `dashboard` de docker-compose y `streamlit` de requirements; actualizar README/QUICKSTART. — depende de: #11 — serial, destructivo (confirmar antes)
 
 - **Orden obligatorio:** #4 antes de #6 (los detectores son pasos), #8 antes de cualquier vista, #11 antes de #12 (no se retira nada sin paridad verificada).
+- **Añadido tras `analyze` (2026-11-02):** el enmascarado de secretos, los errores de credenciales, la tabla `channel_health_scores` y las ejecuciones perdidas entran en los pasos #4-#6 como T073-T080; el área Sistema (T042) los muestra.
 
 ### Apéndice — tabla de paridad inicial (se completa en #10/#11)
 
@@ -265,6 +276,7 @@ src/views/<view>.build(db, channel_id, params) -> dict serializable
 - AC13 temas · AC14 retirada de Streamlit · AC15 cancelar · AC16 salir con pipeline
 - AC17 agrupación de avisos · AC18 salud/canibalización/evergreen · AC19 modo presentación · AC20 acción IA no relanzable
 - AC21 motor no arranca · AC22 sin acceso desde la red · AC23 hora persistente
+- AC24 ejecuciones perdidas · AC25 credencial caducada · AC26 secretos enmascarados (añadidos tras `analyze`)
 
 **Rutas fijadas para todas las tareas:**
 
@@ -280,46 +292,46 @@ src/views/<view>.build(db, channel_id, params) -> dict serializable
 | --- | --- | --- | --- | --- | --- |
 | T001 |  | Install Rust stable (MSVC) y comprobar Build Tools | `rustc --version` y `cargo --version` responden; un proyecto `cargo new` de prueba compila con `cargo build` | — | plan §6.1 (AC1) |
 | T002 | [P] | Add ruff, fastapi, uvicorn y httpx a `requirements.txt`, y crear `ruff.toml` | `pip install -r requirements.txt` ok; `ruff check src/logger.py` y `ruff format --check src/logger.py` ejecutan; `pytest` con 97 verdes | — | constitución §5 |
-| T003 | [P] | Add la fixture `test_db` y el marcador `db` en `tests/conftest.py` | `pytest -m db tests/test_db_fixture.py` verde contra `DB_NAME_TEST`; sin BD hace skip y no falla | — | plan §5 (deps reales) |
+| T003 | [P] | Add la fixture `test_db` y el marcador `db` en `tests/conftest.py` (constitución §22) | `pytest -m db tests/test_db_fixture.py` verde contra `DB_NAME_TEST`; sin BD hace skip y no falla | — | plan §5 (deps reales) |
 | T004 |  | Add `scripts/verify.sh`: ruff en ficheros tocados y pytest; biome/tsc/vitest y clippy/fmt si existe `desktop/` | `bash scripts/verify.sh` sale con 0 en el árbol actual | T002 | constitución DoD |
-| T005 |  | Scaffold `desktop/`: Tauri 2 + React + TS strict + Vite, pnpm, Tailwind, Biome, Vitest y ECharts | `pnpm --dir desktop install`; `biome check .`, `tsc --noEmit` y `vitest run` verdes; `pnpm --dir desktop tauri build --debug` genera el .exe; `bash scripts/verify.sh` = 0 | T001, T004 | constitución §20-21 |
-| T006 | [P] | Spike S1: toast de Windows con activación que abre una ruta | nota `spikes/desktop-app-s1.md` con el mecanismo elegido; manual: pulsar el toast enfoca la ventana y registra la ruta recibida | T005 | AC10, AC18 |
-| T007 | [P] | Spike S2: e2e automatizado de la app en Windows | nota `spikes/desktop-app-s2.md` con un smoke verde que abre la app y lee un texto, o la decisión registrada de "solo lista manual" | T005 | AC1, AC4 |
-| T008 | [P] | Spike S3: ciclo de vida del motor (handshake, matar el árbol de procesos, tiempo de arranque) | nota `spikes/desktop-app-s3.md` con el tiempo medido; manual: tras Salir, `tasklist` no muestra ningún python del motor ni del pipeline | T005 | AC2, AC21 |
+| T005 |  | Scaffold `desktop/`: Tauri 2 + React + TS strict + Vite, pnpm, Tailwind, Biome, Vitest y ECharts | `git ls-files desktop/pnpm-lock.yaml` lo lista (F17); `pnpm --dir desktop install`; `biome check .`, `tsc --noEmit` y `vitest run` verdes; `pnpm --dir desktop tauri build --debug` genera el .exe; `bash scripts/verify.sh` = 0 | T001, T004 | constitución §20-21 |
+| T006 | [P] | Spike S1: toast de Windows con activación que abre una ruta, en la carpeta desechable `spikes/s1/` (F12) | nota `spikes/desktop-app-s1.md` con el mecanismo elegido; manual: pulsar el toast enfoca la ventana y registra la ruta recibida | T005 | AC10, AC18 |
+| T007 | [P] | Spike S2: e2e automatizado de la app en Windows, en `spikes/s2/` (F12) | nota `spikes/desktop-app-s2.md` con un smoke verde que abre la app y lee un texto, o la decisión registrada de "solo lista manual" | T005 | AC1, AC4 |
+| T008 | [P] | Spike S3: ciclo de vida del motor (handshake, matar el árbol de procesos, tiempo de arranque), en `spikes/s3/` (F12) | nota `spikes/desktop-app-s3.md` con el tiempo medido; manual: tras Salir, `tasklist` no muestra ningún python del motor ni del pipeline | T005 | AC2, AC21 |
 | T009 |  | Write failing tests de Settings: defaults, herencia de `dashboard_prefs.json` y de `SCHEDULE_*`, validación | `pytest tests/engine/test_settings.py` falla por módulo ausente | T002 | AC23, spec §Arranque |
 | T010 |  | Implement `src/engine/settings.py` | `pytest tests/engine/test_settings.py` verde | T009 | AC23 |
 | T011 |  | Write failing tests de la API base: sin token → 401, Host ≠ 127.0.0.1 → 403, `health` ok/DbDown | `pytest tests/engine/test_api_base.py` falla por módulo ausente | T002 | AC11, AC22 |
-| T012 |  | Implement la API base y `engine.py` (escucha en 127.0.0.1, puerto 0, con handshake) | `pytest tests/engine/test_api_base.py` verde; `python engine.py --token t` imprime `{"ready": true, "port": N}` como primera línea | T011 | AC11, AC21, AC22 |
+| T012 |  | Implement la API base y `engine.py` (escucha en 127.0.0.1, puerto 0, con handshake) | `pytest tests/engine/test_api_base.py` verde; con `ENGINE_TOKEN=t`, `python engine.py` imprime `{"ready": true, "port": N}` como primera línea, y `engine.py` no acepta el token como argumento (F13) | T011 | AC11, AC21, AC22 |
 | T013 |  | Add los endpoints `channels.list` y `settings.get/update`, tests primero | `pytest tests/engine/test_api_settings.py` pasa de rojo a verde; un update inválido devuelve `Invalid{field}` | T010, T012 | AC1, AC23 |
-| T014 |  | Write failing tests del pipeline por pasos: orden, fallo → `failed`, cancelación entre pasos, JSONL | `pytest tests/pipeline/test_pipeline_steps.py` falla (hoy `main()` se traga el error) | T002 | AC7, AC15 |
+| T014 |  | Write failing tests del pipeline por pasos: orden, fallo → `failed`, cancelación entre pasos, JSONL | `pytest tests/pipeline/test_pipeline_steps.py` falla (hoy `main()` se traga el error); incluye una caracterización de que se crea `TelegramNotifier` y se llama a `notify_pipeline_complete` como hoy (F9) | T002 | AC7, AC15 |
 | T015 |  | Implement `src/pipeline.py` y la CLI de `main.py` (`--run-id`, `--events-jsonl`) | `pytest tests/pipeline/test_pipeline_steps.py` verde; `python main.py --help` muestra los flags; sin flags, los logs no cambian (test) | T014 | AC7, AC14, AC15 |
 | T016 |  | Write failing tests de PipelineRun y del lock global (db) | `pytest -m db tests/pipeline/test_pipeline_runs.py` falla por tabla ausente | T003, T015 | AC8 |
-| T017 |  | Implement la tabla `pipeline_runs`, sus métodos en `src/database.py` y el lock en el pipeline | `pytest -m db tests/pipeline/test_pipeline_runs.py` verde; con dos `main.py` simultáneos, el segundo termina `skipped` (test) | T016 | AC8 |
+| T017 |  | Implement la tabla `pipeline_runs` y, en `src/database.py`, sus métodos y `acquire_pipeline_lock`/`release_pipeline_lock`; el pipeline los usa (F7) | `pytest -m db tests/pipeline/test_pipeline_runs.py` verde; con dos `main.py` simultáneos, el segundo termina `skipped` (test) | T016 | AC8 |
 | T018 |  | Write failing tests de jobs: una ejecución por clave, progreso, cancelación cooperativa | `pytest tests/engine/test_jobs.py` falla por módulo ausente | T012 | AC20 |
 | T019 |  | Implement `src/engine/jobs.py` | `pytest tests/engine/test_jobs.py` verde | T018 | AC20 |
 | T020 |  | Write failing tests del runner: subproceso falso con JSONL → PipelineRun + stream; AlreadyRunning; cancel → cancelled | `pytest tests/engine/test_runner.py` falla | T017, T019 | AC7, AC8, AC15 |
 | T021 |  | Implement `src/engine/runner.py` y los endpoints `pipeline.*` y `events.stream` | `pytest tests/engine/test_runner.py tests/engine/test_api_pipeline.py` verdes | T020 | AC7, AC8, AC15 |
-| T022 |  | Write failing tests del scheduler: reloj falso, reprogramación al cambiar la hora, `next_scheduled` | `pytest tests/engine/test_scheduler.py` falla | T010, T021 | AC9, AC23 |
+| T022 |  | Write failing tests del scheduler: reloj falso, reprogramación al cambiar la hora, `next_scheduled` | `pytest tests/engine/test_scheduler.py` falla; incluye un disparo programado con otra ejecución en curso que deja una fila `skipped` (F8) | T010, T021 | AC9, AC23 |
 | T023 |  | Implement `src/engine/scheduler.py` y arrancarlo con el motor | `pytest tests/engine/test_scheduler.py` verde | T022 | AC9, AC23 |
-| T024 | [P] | Write el test de caracterización del cálculo de salud de `page_modules/health.py` | `pytest tests/test_health_scorer.py` fija con fixtures las cifras actuales y falla por módulo ausente | T002 | AC18, AC6 |
+| T024 | [P] | Write el test de caracterización del cálculo de salud de `page_modules/health.py` | las cifras esperadas salen de ejecutar el código actual de la página sobre fixtures; `pytest tests/test_health_scorer.py` falla solo por módulo ausente (F18) | T002 | AC18, AC6 |
 | T025 |  | Extract `src/health_scorer.py` y hacer que `page_modules/health.py` lo use | `pytest tests/test_health_scorer.py` verde; `grep -n "health_scorer" page_modules/health.py` encuentra el import | T024 | AC18, constitución §11 |
 | T026 | [P] | Write failing tests de NotifiedEvent: `is_new` y siembra silenciosa en la primera ejecución (db) | `pytest -m db tests/pipeline/test_notified_events.py` falla por tabla ausente | T003 | AC18, D2 |
 | T027 |  | Implement la tabla `notified_events` y sus métodos | `pytest -m db tests/pipeline/test_notified_events.py` verde | T026 | AC18, D2 |
-| T028 |  | Write failing tests de los pasos detectores: findings solo de claves nuevas, caída de salud ≥ umbral, transición a evergreen, finding de competencia | `pytest tests/pipeline/test_detector_steps.py` falla | T015, T025, T027 | AC10, AC17, AC18 |
+| T028 |  | Write failing tests de los pasos detectores: findings solo de claves nuevas, caída de salud ≥ umbral, transición a evergreen, finding de competencia | `pytest tests/pipeline/test_detector_steps.py` falla | T015, T025, T027, T078 | AC10, AC17, AC18 |
 | T029 |  | Implement los pasos de salud, despegue tardío, canibalización y evergreen, con sus findings | `pytest tests/pipeline/test_detector_steps.py` verde; `pytest` entero verde | T028 | AC10, AC18 |
 | T030 |  | Write failing Rust tests del supervisor: parseo del handshake → Ready, import ausente → EngineMissing | `cargo test --manifest-path desktop/src-tauri/Cargo.toml supervisor` falla | T008, T012 | AC21 |
 | T031 |  | Implement el supervisor del motor: spawn, espera, reinicio y matar el árbol al salir | `cargo test … supervisor` verde; manual M1 | T030 | AC2, AC21 |
 | T032 |  | Implement bandeja, cerrar → ocultar, instancia única y autoarranque con `--minimized` | `cargo test …` verde; `cargo clippy -- -D warnings` limpio; manual M2-M4 registrados | T031 | AC2, AC3, AC4 |
 | T033 |  | Implement Salir con pipeline en curso → confirmar → cancelar y salir, tests primero | `vitest run src/shell/quit.test.ts` pasa de rojo a verde; manual M5 | T021, T032 | AC16 |
-| T034 |  | Implement el notificador: agrupar por tipo y ejecución, mapa tipo → vista, activación con navegación; tests primero | `vitest run src/shell/notifications.test.ts` pasa de rojo a verde: 3 findings → 1 toast con "3", y cada tipo tiene ruta válida; manual M6 | T006, T021, T032 | AC7, AC10, AC17, AC18 |
+| T034 |  | Implement el notificador: agrupar por tipo y ejecución, mapa tipo → vista, activación con navegación; tests primero | `vitest run src/shell/notifications.test.ts` pasa de rojo a verde: 3 findings → 1 toast con "3", y cada tipo tiene ruta válida; manual M6 | T006, T021, T032, T074 | AC7, AC10, AC17, AC18, AC26 |
 | T035 |  | Implement las pantallas de motor caído y BD caída con reintento, tests primero | `vitest run src/shell/engine-status.test.tsx` pasa de rojo a verde para EngineMissing{paquete} y DbDown | T031, T041 | AC11, AC21 |
 | T036 |  | Run la fase `design` hasta tener una dirección visual aprobada por el propietario | existe `02-DOCS/wiki/sdd/design/desktop-app.md` con la dirección y la aprobación citada | T005 | D3, spec §Problem |
 | T037 |  | Implement los tokens claro/oscuro y la persistencia del tema en Settings, tests primero | `vitest run src/theme/theme.test.ts` pasa de rojo a verde; un test de tokens comprueba contraste AA del texto en ambos temas | T036, T013 | AC13 |
-| T038 |  | Implement el layout: navegación de 6 áreas, router y selector de canal que restaura el último usado; tests primero | `vitest run src/layout/*.test.tsx` pasa de rojo a verde | T037 | AC1, spec §Navegación |
+| T038 |  | Implement el layout: navegación de 6 áreas, router y selector de canal que restaura el último usado; tests primero | `vitest run src/layout/*.test.tsx` pasa de rojo a verde, con último canal y último área restaurados (F16) | T037 | AC1, spec §Navegación |
 | T039 | [P] | Implement los componentes EmptyState, ErrorState, Progress y un gráfico ECharts con tema; tests primero | `vitest run src/components/*.test.tsx` pasa de rojo a verde | T037 | AC12, AC13 |
 | T040 |  | Implement el modo presentación (atajo + Esc), tests primero | `vitest run src/layout/presentation.test.tsx` pasa de rojo a verde | T038 | AC19 |
 | T041 | [P] | Implement el cliente tipado de la API (token, Empty/DbDown/NotFound, suscripción a eventos); tests primero | `vitest run src/api/*.test.ts` pasa de rojo a verde con fetch simulado | T005, T012 | AC11, AC12 |
-| T042 |  | Implement el área Sistema: lanzar, progreso, cancelar, historial, próxima ejecución, hora, autoarranque, umbral | `vitest run src/areas/sistema/*.test.tsx` pasa de rojo a verde; manual M7 | T021, T023, T038, T039, T041 | AC3, AC7, AC8, AC9, AC15, AC23 |
+| T042 |  | Implement el área Sistema: lanzar, progreso, cancelar, historial, próxima ejecución, hora, autoarranque, umbral | `vitest run src/areas/sistema/*.test.tsx` pasa de rojo a verde; manual M7 | T021, T023, T038, T039, T041, T076, T080 | AC3, AC7, AC8, AC9, AC15, AC23, AC24, AC25 |
 | T043 |  | Migrate la vista piloto Resumen General, con widgets (receta R) | receta R verde para `overview` | T038, T039, T041 | AC5, AC6, AC12 |
 | T044 |  | Migrate Salud del Canal (R) | R verde para `health` | T043, T025 | AC5, AC6 |
 | T045 |  | Review el piloto: medir el esfuerzo, ajustar la receta R y registrarlo en decisions.md | entrada fechada en `decisions.md` con las horas por vista y los cambios en R | T044 | plan §7 (riesgo 1) |
@@ -348,7 +360,15 @@ src/views/<view>.build(db, channel_id, params) -> dict serializable
 | T068 |  | Implement "actualizar datos" global: invalida las cachés del motor y recarga la vista | `pytest tests/engine/test_api_views.py -k refresh` y `vitest run src/layout/refresh.test.tsx` verdes | T043 | AC5 |
 | T069 |  | Complete la tabla de paridad del apéndice, con ubicación y ✓ en cada fila | las 25 filas del apéndice con ubicación y ✓, ninguna vacía | T042, T044, T051, T056, T064, T067, T068 | AC5 |
 | T070 |  | Run el smoke e2e (si S2 lo permitió) y la lista manual M1-M8 | resultados fechados en la sección `## Verification` de este plan, todos OK | T069, T033, T034, T035 | AC1-AC4, AC10, AC11, AC16, AC18 |
-| T071 |  | Retire Streamlit, `scheduler.py` y el servicio `dashboard`. Es destructivo: confirmar antes con el propietario | `grep -rn "streamlit" --include=*.py --include=*.txt .` sin resultados; `docker compose config` sin `dashboard`; `python main.py --help` ok; `pytest` verde | T069, T070 | AC14 |
+| T071 |  | Retire Streamlit, `scheduler.py` y el servicio `dashboard`, y aplicar el PATCH de la constitución §18 (F14). Es destructivo: confirmar antes con el propietario | `grep -rn "streamlit" --include=*.py --include=*.txt .` sin resultados; `docker compose config` sin `dashboard`; `python main.py --help` ok; `pytest` verde | T069, T070 | AC14 |
+| T073 |  | Write failing tests de `redact()` y de su uso en PipelineRun, eventos y respuestas de error de la API (F2) | `pytest tests/engine/test_redact.py` falla por módulo ausente | T002 | AC26, constitución §15 |
+| T074 |  | Implement `src/redact.py` y aplicarlo en el runner, los eventos y los errores de la API | `pytest tests/engine/test_redact.py tests/engine/test_runner.py` verdes; `grep -rn "redact(" src/engine/runner.py src/engine/api.py` encuentra las llamadas | T073, T021 | AC26 |
+| T075 |  | Write failing tests de CredentialError: token de Google caducado y clave de Anthropic ausente → `failed` con servicio y texto de renovación (F3) | `pytest tests/pipeline/test_credential_errors.py` falla | T015 | AC25 |
+| T076 |  | Implement la clasificación de errores de credenciales en el pipeline y los textos de renovación en español | `pytest tests/pipeline/test_credential_errors.py` verde | T075, T074 | AC25 |
+| T077 |  | Write failing tests de `channel_health_scores` (db): el paso de salud guarda la puntuación y no escribe en `channel_health_reports` (F4) | `pytest -m db tests/pipeline/test_health_scores.py` falla por tabla ausente | T003, T025 | AC18 |
+| T078 |  | Implement la tabla `channel_health_scores` y sus métodos en `src/database.py` | `pytest -m db tests/pipeline/test_health_scores.py` verde | T077 | AC18 |
+| T079 |  | Write failing tests de ejecuciones perdidas: reloj falso, filas `missed`, máximo 7 (F5) | `pytest tests/engine/test_missed_runs.py` falla | T010, T017 | AC24 |
+| T080 |  | Implement el registro de ejecuciones perdidas al arrancar el motor | `pytest tests/engine/test_missed_runs.py` verde | T079, T023 | AC24 |
 | T072 |  | All done-checks pass + `verify.sh` green | todas las filas anteriores marcadas; `bash scripts/verify.sh` sale con 0 | all | spec §Acceptance |
 
 ### Receta R — migración de una vista (Interfaces común a T043-T067)
@@ -358,13 +378,13 @@ src/views/<view>.build(db, channel_id, params) -> dict serializable
   1. Test de caracterización que fija, con fixtures de DataFrame, las cifras que calcula hoy la vista → `tests/views/test_<vista>.py`.
   2. Extraer el cálculo a `src/views/<vista>.py::build(db, channel_id, params) -> dict`, sin `st.*`.
   3. La página Streamlit llama a `build()` y solo pinta.
-  4. Endpoint `views.get("<vista>", …)` que serializa el resultado de `build()`.
-  5. Vista React en `desktop/src/areas/<área>/<Vista>.tsx`, con estados vacío y de error.
+  4. Endpoint `views.get("<vista>", …)` en su propio módulo `src/engine/view_routes/<vista>.py`, que la API descubre sin editar ningún fichero común (F11).
+  5. Vista React en `desktop/src/areas/<área>/<Vista>.tsx`, con estados vacío y de error, registrada en `desktop/src/areas/<área>/routes.ts`. Las tareas de una misma área van en serie (F11).
   6. Fila de paridad con su ubicación y una cifra de control.
 - **Produces:** `GET views/<vista>` → `ViewModel` | `Empty{hint}` | `DbDown` | `NotFound`.
 - **R verde** significa que se cumple todo esto:
   - `pytest tests/views/test_<vista>.py` verde;
-  - `pytest tests/engine/test_api_views.py -k <vista>` verde;
+  - `pytest tests/engine/test_view_route_<vista>.py` verde;
   - `pnpm --dir desktop exec vitest run src/areas/<área>/<Vista>.test.tsx` verde, incluido el estado vacío;
   - `grep -n "views.<vista>" page_modules/<módulo>.py` encuentra la llamada;
   - la fila del apéndice está marcada con ✓.
@@ -392,7 +412,7 @@ src/views/<view>.build(db, channel_id, params) -> dict serializable
 ### Lista manual guiada (para T031-T034, T042 y T070)
 
 - **M1:** tras Salir no queda ningún proceso python.
-- **M2:** al cerrar la ventana, la app sigue en la bandeja.
+- **M2:** al cerrar la ventana, la app sigue en la bandeja y la próxima ejecución sigue programada (F15).
 - **M3:** la app arranca al iniciar sesión, sin abrir ventana.
 - **M4:** una segunda apertura enfoca la ventana existente.
 - **M5:** Salir con un pipeline en curso, probando confirmar y rechazar.
@@ -404,7 +424,7 @@ src/views/<view>.build(db, channel_id, params) -> dict serializable
 
 | Dimension | Forecast | Why |
 | --- | --- | --- |
-| Estimated changed lines | 15.000-25.000, incluidas unas 6.000 de Streamlit que se borran en T071 | 72 tareas: motor, pipeline, shell Rust, sistema de diseño, y las 24 vistas extraídas y reescritas |
+| Estimated changed lines | 15.000-25.000, incluidas unas 6.000 de Streamlit que se borran en T071 | 80 tareas: motor, pipeline, shell Rust, sistema de diseño, y las 24 vistas extraídas y reescritas |
 | Files / areas | más de 150 ficheros en `src/engine/`, `src/views/`, `src/pipeline.py`, `src/database.py`, `page_modules/`, `desktop/` (TS + Rust), `tests/` y docs | stack cruzado Python + TypeScript + Rust |
 | Review risk | high | cambio de arquitectura, procesos del SO, API local con token, esquema nuevo y una retirada destructiva |
 | Suggested delivery | autochain por tarea: un commit por tarea en `main` con la suite verde, con pausas en T008, T036, T045 y T071 | supera con mucho el presupuesto por defecto de 400 líneas; la constitución manda directo a `main`; las pausas caen en los puntos de mayor incertidumbre o destructivos |

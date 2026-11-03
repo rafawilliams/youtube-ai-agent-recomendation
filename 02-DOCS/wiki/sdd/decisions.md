@@ -51,3 +51,10 @@ topic: sdd
 
 - D1: React + TypeScript + Vite + Tailwind + ECharts, Biome/Vitest; motor FastAPI + uvicorn → constitución v1.1.0 (§20-21). *Opciones:* Svelte + ECharts; React + Plotly.js. *Por qué:* mayor ecosistema, plantilla oficial de Tauri, ECharts deja libertad para el rediseño.
 - D2: la primera ejecución de los detectores siembra en silencio. *Por qué:* evitar avisos de todo lo ya existente.
+
+## 2026-11-02 — Hallazgos de `analyze` resueltos (desktop-app)
+
+- **F1:** constitución v1.2.0. El principio 7 queda superado por el 22, que permite una MariaDB local de pruebas con el marcador `db`. *Opción descartada:* simular la BD, que no prueba el lock real.
+- **F4:** el pipeline guarda solo la puntuación diaria de salud en `channel_health_scores`, sin Claude; los informes con diagnóstico IA siguen bajo demanda. *Opción descartada:* informe completo diario, con coste de Claude por canal y día.
+- **F5:** una fila "no ejecutada (app cerrada)" por día perdido, con un máximo de 7. *Opciones descartadas:* solo un aviso; nada.
+- **F2, F3, F6, F7, F8-F13, F15-F18:** resueltos en spec, plan y tareas (T073-T080 nuevas). F14 queda en T071.

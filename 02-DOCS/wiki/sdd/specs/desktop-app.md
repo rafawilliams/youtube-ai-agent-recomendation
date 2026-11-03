@@ -117,8 +117,8 @@ competidores. Lee la interfaz en español.
 ### Notificaciones
 
 - La app muestra una notificación de Windows cuando el pipeline termina, falla o se cancela;
-  genera alertas de competencia; detecta despegues tardíos; detecta canibalización nueva; la salud
-  de un canal cae de forma brusca respecto al informe anterior; o un vídeo pasa a ser evergreen
+  genera alertas de competencia; detecta despegues tardíos; detecta canibalización nueva; la puntuación
+  de salud de un canal cae de forma brusca respecto a la anterior; o un vídeo pasa a ser evergreen
   (antes no lo era).
 - Cada ejecución produce como mucho una notificación por tipo de evento, que agrupa todos los
   casos de ese tipo (por ejemplo, "3 alertas de competencia").
@@ -129,8 +129,9 @@ competidores. Lee la interfaz en español.
 - Sin datos todavía (primer uso o canal sin vídeos): cada vista muestra un estado vacío en español
   que dice qué hacer, por ejemplo ejecutar el pipeline.
 - Ejecución programada que llega con otra en curso: no se lanza una segunda. La omisión queda en el historial.
-- El equipo estaba apagado o la app cerrada a la hora programada: esa ejecución no ocurre. El
-  historial lo refleja al volver.
+- El equipo estaba apagado o la app cerrada a la hora programada: esa ejecución no ocurre. Al
+  arrancar, la app añade al historial una fila "no ejecutada (app cerrada)" por cada día perdido
+  desde la última ejecución, con un máximo de 7 filas.
 - Se abre la app con otra instancia ya en marcha: se trae al frente la existente y no se crea otra.
 
 ### Error paths
@@ -183,7 +184,7 @@ competidores. Lee la interfaz en español.
   rechaza, la app y el pipeline siguen. Si confirma, el pipeline se cancela y la app termina.
 - Given una ejecución que produce 3 alertas de competencia, When termina, Then llega una sola
   notificación de competencia que dice 3, y no tres separadas.
-- Given un informe de salud con una caída brusca respecto al anterior, una canibalización nueva o
+- Given una puntuación de salud con una caída brusca respecto a la anterior, una canibalización nueva o
   un vídeo que pasa a evergreen, When termina la ejecución, Then llega la notificación de ese tipo.
   Pulsarla abre la vista correspondiente.
 - Given cualquier vista, When el usuario activa el modo presentación, Then la vista ocupa toda la
@@ -195,6 +196,16 @@ competidores. Lee la interfaz en español.
 - Given otro equipo en la misma red, When intenta acceder a los datos o acciones de la app, Then no lo consigue.
 - Given el usuario cambia la hora programada a las 09:30, When cierra y vuelve a abrir la app, Then
   la próxima ejecución mostrada es a las 09:30.
+- Given la última ejecución fue hace 3 días y la app estuvo cerrada a las horas programadas, When
+  el usuario abre la app hoy antes de la hora programada, Then el historial muestra 2 filas "no
+  ejecutada (app cerrada)" (anteayer y ayer), una por
+  cada día perdido (como máximo 7).
+- Given el token de Google caducado, When el pipeline llega al paso que lo usa, Then ese paso falla
+  y el historial y la notificación dicen "Credencial de Google caducada" y cómo renovarla, sin
+  mostrar el valor de ninguna clave ni token.
+- Given un error cuyo texto original contiene una clave o un token, When se muestra en el
+  historial, en una notificación o en la respuesta de la API, Then el valor aparece sustituido por
+  "***".
 
 ## Points to clarify
 
@@ -215,7 +226,7 @@ competidores. Lee la interfaz en español.
   *Riesgo:* el esfuerzo es grande y la app no aporta valor hasta el final. El propietario lo eligió
   sabiéndolo; queda registrado.
 - **suposición tomada** — "Caída brusca" de salud = la puntuación de salud baja 10 puntos o más
-  respecto al informe anterior del mismo canal. *Base:* la puntuación es un entero de 0 a 100.
+  respecto a la puntuación anterior del mismo canal. *Base:* la puntuación es un entero de 0 a 100.
   *Riesgo:* demasiados o muy pocos avisos. El umbral es ajustable.
 - **decisión diferida** — Dirección técnica: Tauri como contenedor de escritorio (requisito del
   propietario), con la lógica en Python expuesta por una API local que la interfaz consume. Esto
@@ -253,3 +264,6 @@ competidores. Lee la interfaz en español.
   paridad → validada · otros eventos → preguntada y resuelta · modo presentación → preguntada y
   resuelta · dirección técnica → se deja diferida a `plan` · dirección visual → anotada, sigue no
   formulable (`design` en `plan`).
+- 2026-11-02 (tras `analyze`) — ¿Cómo refleja el historial una ejecución perdida? → Al arrancar, una fila "no ejecutada (app cerrada)" por día perdido, con un máximo de 7. → *Por qué:* hallazgo F5; se ve el hueco sin recuperar la ejecución.
+- 2026-11-02 (tras `analyze`) — La caída de salud se mide entre **puntuaciones** diarias, no entre informes con diagnóstico IA. → *Por qué:* hallazgo F4; el pipeline calcula solo la puntuación, sin Claude, y los informes con diagnóstico siguen siendo bajo demanda en la página.
+- 2026-11-02 (tras `analyze`) — Añadidos criterios de aceptación para el error de credenciales y para el enmascarado de secretos. → *Por qué:* hallazgos F2 y F3 (requisitos de la spec sin criterio comprobable).
