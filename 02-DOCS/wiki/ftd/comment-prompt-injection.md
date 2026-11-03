@@ -29,7 +29,7 @@ la constitución §16. Lo detectó la revisión automática de seguridad sobre e
 - [x] Triangulación: la respuesta del modelo con claves de más o etiquetas fuera del conjunto no
       altera el resultado. *Prueba:* test verde.
 - [x] Suite entera verde y Ruff limpio en los ficheros tocados (constitución §5-6).
-- [ ] Commit propio en `main`.
+- [x] Commit propio en `main`. *Prueba:* `3a51c3b`.
 
 ## Evidence
 
@@ -43,4 +43,4 @@ la constitución §16. Lo detectó la revisión automática de seguridad sobre e
 
 ## Next
 
-Commit. Pendiente fuera de este alcance: revisar con el mismo patrón los prompts de `ai_analyzer`, `content_classifier` y `thumbnail_analyzer`, que también envían texto de terceros (títulos y descripciones) a Claude.
+Hecho. Pendiente fuera de este alcance: revisar con el mismo patrón los prompts de `ai_analyzer`, `content_classifier` y `thumbnail_analyzer`, que también envían texto de terceros (títulos y descripciones) a Claude.
