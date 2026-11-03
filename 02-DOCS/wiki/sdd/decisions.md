@@ -58,3 +58,10 @@ topic: sdd
 - **F4:** el pipeline guarda solo la puntuación diaria de salud en `channel_health_scores`, sin Claude; los informes con diagnóstico IA siguen bajo demanda. *Opción descartada:* informe completo diario, con coste de Claude por canal y día.
 - **F5:** una fila "no ejecutada (app cerrada)" por día perdido, con un máximo de 7. *Opciones descartadas:* solo un aviso; nada.
 - **F2, F3, F6, F7, F8-F13, F15-F18:** resueltos en spec, plan y tareas (T073-T080 nuevas). F14 queda en T071.
+
+## 2026-11-02 — Pin de anthropic (feature: desktop-app, task: T002)
+
+- **Context:** `requirements.txt` fijaba `anthropic==0.18.1`. Con httpx 0.28, que es lo que se resuelve hoy, el cliente real no se puede construir (`TypeError: 'proxies'`). El `.venv` usaba 0.84.0 y funcionaba. Los tests no lo detectaban porque simulan el cliente.
+- **Options:** `anthropic>=0.84,<1`; mantener 0.18.1 y fijar `httpx<0.28`.
+- **Decision:** `anthropic>=0.84.0,<1.0.0`, más `tests/test_dependencies.py`, que construye el cliente real.
+- **Why:** fija la versión que de verdad se usa; el código ya usa `messages.create`. Elección del propietario.

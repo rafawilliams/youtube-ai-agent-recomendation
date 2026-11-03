@@ -1,0 +1,8 @@
+# Ruff — lint + formato (constitución §5: obligatorio en ficheros nuevos o tocados;
+# el legado sin tocar queda exento hasta que se edite).
+target-version = "py313"
+line-length = 88
+extend-exclude = ["desktop", "models", "logs", "data", "01-TOOLS", "02-DOCS"]
+
+[format]
+quote-style = "double"
