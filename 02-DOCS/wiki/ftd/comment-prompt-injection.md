@@ -33,6 +33,10 @@ la constitución §16. Lo detectó la revisión automática de seguridad sobre e
 
 ## Evidence
 
+- **Segunda ronda (2026-11-02), tras otra revisión automática:** un comentario con `</comentarios>` cerraba el bloque de datos.
+  - Rojo: `test_comment_cannot_close_the_delimiter` → `assert 2 == 1` (aparecían dos `<comentarios>`).
+  - Verde: `<` y `>` se escapan como `<` y `>` dentro del JSON. Resultado: 7 passed en el fichero y 104 passed en la suite, con Ruff limpio.
+
 - **Rojo (2026-11-02):** `pytest tests/test_comment_analyzer.py` → 5 failed, 1 passed. Los fallos se deben a la ausencia de `<comentarios>` en el prompt y a `system` vacío. El test de parseo ya pasaba: protege un comportamiento que ya existía.
   - Un sexto fallo inicial (`AttributeError`) venía de un error del propio test, cuyo texto no llevaba `?`. Se corrigió el test antes de tocar código.
 - **Verde:** `pytest tests/test_comment_analyzer.py` → 6 passed.
