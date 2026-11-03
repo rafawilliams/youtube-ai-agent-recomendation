@@ -136,3 +136,14 @@ skills-lock.json
 
 # OAuth Calendar + Sheets
 token_integrations.json
+
+# rsc local state (hooks, seals, logs) and managed skill links — machine-local
+.claude/skills/fastapi
+.claude/skills/mysql
+.claude/skills/react
+.claude/skills/rust
+.claude/skills/secure-coding
+.claude/skills/tauri
+.claude/skills/testing-py
+.claude/skills/testing-web
+.claude/skills/typescript

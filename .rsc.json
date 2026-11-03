@@ -14,25 +14,34 @@
     "deprecation",
     "design",
     "fable-operator",
+    "fastapi",
     "ftd",
     "harness",
     "idea-refinement",
     "implement",
     "init",
+    "mysql",
     "orient",
     "parallel",
     "plan",
     "python",
+    "react",
     "review",
+    "rust",
     "sdd",
     "sdd-init",
+    "secure-coding",
     "ship",
     "simplify-code",
     "source-grounded-development",
     "specify",
     "suggest",
     "tasks",
+    "tauri",
+    "testing-py",
+    "testing-web",
     "tidy",
+    "typescript",
     "unslop",
     "ux",
     "verify",
@@ -50,6 +59,7 @@
   "catalogVersion": "3.7.5",
   "tier": null,
   "optOuts": [
+    "gitmoji",
     "trunk-guard"
   ],
   "gitPermissions": true,
@@ -884,6 +894,11 @@
       "02-DOCS/wiki/harness/decisions.md": "00a3d9ff83d4a1c462eb96caf3cf8913f747426be986af6c1d1562dd7b155f5b",
       "02-DOCS/wiki/harness/installation-plan.md": "83332e2ae242e5cd9f96dff7674ba30eecc4535ad6dce65c16970e9036da9c8f",
       "02-DOCS/wiki/harness/user-profile.md": "b0a3422ca95c2620dae0f4a97d7304d7d886cd09622edd9c0f0697e4aecdbeb6"
+    },
+    "maintenanceDrift": {
+      "action": "add tauri,rust,react,typescript,fastapi,testing-py,testing-web,mysql,secure-coding",
+      "recordedAt": "2026-11-03T01:07:56.215Z",
+      "requiresReassessment": true
     }
   }
 }
