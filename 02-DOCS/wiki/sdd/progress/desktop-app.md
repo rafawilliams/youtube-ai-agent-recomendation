@@ -37,3 +37,21 @@ slug: desktop-app
 - decision: `anthropic>=0.84.0,<1.0.0` en lugar de `==0.18.1` (ver decisions.md).
 - incidente: el primer `pip install -r` bajó anthropic de 0.84.0 a 0.18.1 en el `.venv`; restaurado de inmediato a 0.84.0.
 - blocker: none
+
+## Ajuste — 2026-11-02
+
+- `requirements-windows.txt`: mismo pin de anthropic que en T002 (`8b2144e`), a petición del propietario.
+
+## T003 — 2026-11-02
+
+- status: complete
+- red: `pytest tests/test_db_fixture.py`, primero con ImportError (no es un rojo válido) y después con stubs: 5 failed por NotImplementedError y 4 errors por fixture `test_db` inexistente.
+- green: `pytest tests/test_db_fixture.py` → 9 passed. `pytest -m db tests/test_db_fixture.py` → 4 passed, 5 deselected.
+- skip: con `DB_PORT=1`, `pytest -m db …` → 4 skipped ("MariaDB local no disponible") y ningún fallo.
+- triangulation: aislamiento entre tests (el segundo test ve 0 filas); se niega a usar la BD de producción, sea por `DB_NAME` o por el nombre por defecto; comprueba `SELECT DATABASE()` antes de devolver la conexión, como defensa ante `load_dotenv(override=True)` en `main.py`.
+- entorno: se creó la BD `youtube_test` (utf8mb4) en la MariaDB local. Producción comprobada intacta: 3 canales y 365 vídeos.
+- files: tests/conftest.py (fixtures añadidas al final y fichero reformateado con Ruff, al haberse tocado), tests/db_support.py, tests/test_db_fixture.py, pytest.ini (marcador `db`), .env.example (`DB_NAME_TEST`).
+- suite: 115 passed.
+- decision: `DB_NAME_TEST` tiene por defecto `youtube_test` y no se escribe en `.env`, porque ese fichero es del propietario.
+- incidente menor: al registrar el marcador, `pytest.ini` se escribió en cp1252; se reescribió en ASCII.
+- blocker: none
