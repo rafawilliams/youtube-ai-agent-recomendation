@@ -1,10 +1,12 @@
 """
 Fixtures compartidos para la suite de tests del YouTube AI Agent.
 """
-import pytest
-import pandas as pd
-import numpy as np
+
 from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pandas as pd
+import pytest
 
 
 @pytest.fixture
@@ -83,33 +85,38 @@ def sample_videos_df():
 
     for i in range(20):
         is_short = i % 3 == 0  # ~7 shorts, ~13 long
-        duration_secs = np.random.randint(15, 60) if is_short else np.random.randint(300, 1800)
+        duration_secs = (
+            np.random.randint(15, 60) if is_short else np.random.randint(300, 1800)
+        )
         views = np.random.randint(500, 50000)
         likes = int(views * np.random.uniform(0.02, 0.08))
         comments = int(views * np.random.uniform(0.005, 0.02))
         engagement = round((likes + comments) / max(views, 1) * 100, 2)
 
-        records.append({
-            "video_id": f"vid_{i:03d}",
-            "title": titles[i],
-            "description": descriptions[i],
-            "published_at": base_date + pd.Timedelta(days=i * 2, hours=np.random.randint(8, 22)),
-            "channel_id": "UC_test_channel_001",
-            "channel_title": "Canal de Prueba",
-            "duration": f"PT{duration_secs}S",
-            "duration_seconds": duration_secs,
-            "is_short": is_short,
-            "video_type": "Short" if is_short else "Video Largo",
-            "view_count": views,
-            "like_count": likes,
-            "comment_count": comments,
-            "tags": tag_options[i],
-            "category_id": "22",
-            "privacy_status": "public",
-            "engagement_rate": engagement,
-            "days_since_published": (40 - i * 2),
-            "content_category": "other",
-        })
+        records.append(
+            {
+                "video_id": f"vid_{i:03d}",
+                "title": titles[i],
+                "description": descriptions[i],
+                "published_at": base_date
+                + pd.Timedelta(days=i * 2, hours=np.random.randint(8, 22)),
+                "channel_id": "UC_test_channel_001",
+                "channel_title": "Canal de Prueba",
+                "duration": f"PT{duration_secs}S",
+                "duration_seconds": duration_secs,
+                "is_short": is_short,
+                "video_type": "Short" if is_short else "Video Largo",
+                "view_count": views,
+                "like_count": likes,
+                "comment_count": comments,
+                "tags": tag_options[i],
+                "category_id": "22",
+                "privacy_status": "public",
+                "engagement_rate": engagement,
+                "days_since_published": (40 - i * 2),
+                "content_category": "other",
+            }
+        )
 
     return pd.DataFrame(records)
 
@@ -203,7 +210,9 @@ def training_videos_df():
     records = []
     for i in range(25):
         is_short = i % 4 == 0  # ~6 shorts
-        duration_secs = np.random.randint(15, 55) if is_short else np.random.randint(300, 2400)
+        duration_secs = (
+            np.random.randint(15, 55) if is_short else np.random.randint(300, 2400)
+        )
         # Views con varianza significativa para que el modelo pueda aprender
         views = int(np.random.lognormal(mean=9, sigma=1.2))
         likes = int(views * np.random.uniform(0.02, 0.10))
@@ -216,27 +225,102 @@ def training_videos_df():
         has_question = 1 if np.random.random() > 0.7 else 0
         title_base = f"Video de prueba {'#' + str(i) if has_number else ''} {'?' if has_question else ''} - Tema {i % 5}"
 
-        records.append({
-            "video_id": f"train_{i:03d}",
-            "title": title_base,
-            "description": f"Descripción del video {i} con contenido variado " * 3,
-            "published_at": base_date + pd.Timedelta(days=i * 3, hours=np.random.randint(6, 23)),
-            "channel_id": "UC_train_channel_001",
-            "channel_title": "Canal Entrenamiento",
-            "duration": f"PT{duration_secs}S",
-            "duration_seconds": duration_secs,
-            "is_short": is_short,
-            "video_type": "Short" if is_short else "Video Largo",
-            "view_count": views,
-            "like_count": likes,
-            "comment_count": comments,
-            "tags": tags,
-            "category_id": "22",
-            "privacy_status": "public",
-            "engagement_rate": engagement,
-            "days_since_published": 75 - i * 3,
-            "content_category": "tutorial" if i % 3 == 0 else "entertainment",
-            "avg_view_percentage": round(np.random.uniform(20, 80), 1),
-        })
+        records.append(
+            {
+                "video_id": f"train_{i:03d}",
+                "title": title_base,
+                "description": f"Descripción del video {i} con contenido variado " * 3,
+                "published_at": base_date
+                + pd.Timedelta(days=i * 3, hours=np.random.randint(6, 23)),
+                "channel_id": "UC_train_channel_001",
+                "channel_title": "Canal Entrenamiento",
+                "duration": f"PT{duration_secs}S",
+                "duration_seconds": duration_secs,
+                "is_short": is_short,
+                "video_type": "Short" if is_short else "Video Largo",
+                "view_count": views,
+                "like_count": likes,
+                "comment_count": comments,
+                "tags": tags,
+                "category_id": "22",
+                "privacy_status": "public",
+                "engagement_rate": engagement,
+                "days_since_published": 75 - i * 3,
+                "content_category": "tutorial" if i % 3 == 0 else "entertainment",
+                "avg_view_percentage": round(np.random.uniform(20, 80), 1),
+            }
+        )
 
     return pd.DataFrame(records)
+
+
+# ── BD local de pruebas (constitución §22) ───────────────────────────
+
+
+@pytest.fixture(scope="session")
+def _test_db_session():
+    """Conexión de sesión a DB_NAME_TEST con el esquema real de src/database.py.
+
+    Hace skip si MariaDB no responde. Nunca usa la BD de producción.
+    """
+    import os
+
+    import pymysql
+    from db_support import db_reachable, resolve_test_db_name
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    test_name = resolve_test_db_name()
+    creds = {
+        "host": os.getenv("DB_HOST", "localhost"),
+        "port": int(os.getenv("DB_PORT", "3306")),
+        "user": os.getenv("DB_USER", "root"),
+        "password": os.getenv("DB_PASSWORD", ""),
+    }
+    if not db_reachable(**creds):
+        pytest.skip("MariaDB local no disponible: se saltan los tests marcados `db`")
+
+    admin = pymysql.connect(**creds)
+    try:
+        admin.cursor().execute(
+            f"CREATE DATABASE IF NOT EXISTS `{test_name}` CHARACTER SET utf8mb4"
+        )
+    finally:
+        admin.close()
+
+    previous = os.environ.get("DB_NAME")
+    os.environ["DB_NAME"] = test_name
+    try:
+        from database import YouTubeDatabase
+
+        db = YouTubeDatabase()
+    finally:
+        if previous is None:
+            os.environ.pop("DB_NAME", None)
+        else:
+            os.environ["DB_NAME"] = previous
+
+    cur = db.conn.cursor()
+    cur.execute("SELECT DATABASE() AS db")
+    connected = cur.fetchone()["db"]
+    if connected != test_name:
+        db.conn.close()
+        pytest.fail(f"La fixture se conectó a '{connected}' en vez de '{test_name}'")
+
+    yield db
+    db.conn.close()
+
+
+@pytest.fixture
+def test_db(_test_db_session):
+    """YouTubeDatabase sobre DB_NAME_TEST con todas las tablas vacías."""
+    db = _test_db_session
+    cur = db.conn.cursor()
+    cur.execute("SHOW TABLES")
+    tables = [next(iter(row.values())) for row in cur.fetchall()]
+    cur.execute("SET FOREIGN_KEY_CHECKS = 0")
+    for table in tables:
+        cur.execute(f"TRUNCATE TABLE `{table}`")
+    cur.execute("SET FOREIGN_KEY_CHECKS = 1")
+    db.conn.commit()
+    return db
