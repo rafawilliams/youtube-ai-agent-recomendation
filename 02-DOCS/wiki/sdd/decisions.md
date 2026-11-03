@@ -31,3 +31,10 @@ topic: sdd
 ## 2026-11-02 — Spec `desktop-app`: Telegram fuera de alcance
 
 - Telegram no forma parte de esta mejora. La app no lo toca ni lo sustituye. *Por qué:* petición del propietario al revisar la spec.
+
+## 2026-11-02 — Spec `desktop-app` aprobada y aclarada (status: clarified)
+
+- Cancelación al terminar el paso en curso; "Salir" confirma y cancela.
+- Notificaciones añadidas: canibalización, caída de salud (≥10 puntos, ajustable), evergreen. Agrupadas por tipo y ejecución.
+- Al retirar Streamlit se retiran también `scheduler.py` y el servicio `dashboard` de docker-compose; `main.py` sigue como CLI.
+- Modo presentación = pantalla completa limpia.
