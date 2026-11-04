@@ -103,7 +103,9 @@
   },
   "permissions": {
     "allow": [
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(gh pr create *)"
     ],
     "ask": [
       "Bash(git push*)",
@@ -113,5 +115,9 @@
       "Bash(git push * --force*)",
       "Bash(git push * -f*)"
     ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
   }
 }

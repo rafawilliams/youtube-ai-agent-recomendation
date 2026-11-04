@@ -43,7 +43,7 @@ const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?$/i;
  * nothing checks is just drift with a head start.
  */
 export const PROJECT_OPT_OUTS = [
-  'audit', 'auto-update', 'claudemd-check', 'copy-guard', 'danger-guard', 'feature-gate', 'ftd-close', 'ftd-nudge', 'gitmoji', 'knowledge-sync', 'ship-guard', 'trunk-guard', 'trunk-open', 'worktree-cleanup', 'worktree-isolation',
+  'asdd-gate', 'audit', 'auto-update', 'claudemd-check', 'copy-guard', 'danger-guard', 'feature-gate', 'ftd-close', 'ftd-nudge', 'gitmoji', 'knowledge-sync', 'ship-guard', 'trunk-guard', 'trunk-open', 'worktree-cleanup', 'worktree-isolation',
 ];
 
 /**
@@ -95,7 +95,7 @@ export function readManifest(root) {
   const ids = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && ID.test(x)) : []);
   // Retired skills read as their successors. Canonical map: scripts/lib/retired-skills.js — inlined
   // because this file cannot import anything, and tests/retired-skills.test.js holds the two equal.
-  const RETIRED = { eli5: 'orient', 'show-me': 'orient', bro: 'unslop', 'design-loop': 'design', 'design-dna': 'design', 'motion-craft': 'design', 'ui-engineering': 'ux' };
+  const RETIRED = { eli5: 'orient', 'show-me': 'orient', bro: 'unslop', 'design-loop': 'design', 'design-dna': 'design', 'motion-craft': 'design', 'ui-engineering': 'ux', sdd: 'asdd' };
   const skills = [...new Set(ids(parsed.skills).map((id) => (Object.hasOwn(RETIRED, id) ? RETIRED[id] : id)))];
   const own = ids(parsed.ownSkills);
   // A manifest with nothing declared is not a clone waiting to be equipped; there is nothing to offer.

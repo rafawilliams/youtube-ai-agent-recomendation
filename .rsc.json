@@ -5,6 +5,7 @@
   ],
   "skills": [
     "analyze",
+    "asdd",
     "automation-strategy",
     "clarify",
     "connect-tool",
@@ -28,7 +29,6 @@
     "react",
     "review",
     "rust",
-    "sdd",
     "sdd-init",
     "secure-coding",
     "ship",
@@ -56,7 +56,7 @@
     "refuter-tests"
   ],
   "ownSkills": [],
-  "catalogVersion": "3.7.5",
+  "catalogVersion": "4.0.5",
   "tier": null,
   "optOuts": [
     "gitmoji",
