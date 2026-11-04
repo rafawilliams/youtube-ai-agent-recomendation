@@ -1,54 +1,59 @@
-# 📊 YouTube Analytics Agent
+# 📊 YouTube AI Agent — Recomendaciones de Contenido
 
-> **Sistema inteligente de análisis de YouTube usando ML y APIs** – Proyecto portfolio para demostrar habilidades en Data Engineering, Machine Learning y MLOps
+> **Sistema inteligente de análisis de YouTube usando ML, LLMs y APIs** – Proyecto portfolio para demostrar habilidades en Data Engineering, Machine Learning y MLOps
 
-[![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-FF4B4B.svg)](https://streamlit.io)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.41+-FF4B4B.svg)](https://streamlit.io)
+[![MariaDB](https://img.shields.io/badge/MariaDB-11-003545.svg)](https://mariadb.org)
 
 ---
 
 ## 🎯 Descripción del Proyecto
 
-**YouTube Analytics Agent** es una aplicación de análisis de datos que combina la **YouTube Data API v3** con **Claude AI** para extraer insights automatizados de canales y videos de YouTube. El sistema recolecta métricas, almacena datos históricos en SQLite, y genera análisis predictivos mediante machine learning.
+**YouTube AI Agent** es una herramienta de análisis de datos que combina la **YouTube Data API v3**, la **YouTube Analytics API** y **Claude AI** para extraer insights automatizados de canales y videos de YouTube. El sistema recolecta métricas, almacena el histórico en **MariaDB**, entrena modelos de machine learning para predecir rendimiento y genera recomendaciones de contenido accionables.
 
 ### Problema que resuelve
 Los creadores de contenido necesitan entender patrones de crecimiento, engagement y rendimiento de videos, pero el análisis manual es tedioso y poco escalable. Este agente automatiza la recolección, procesamiento y análisis de datos para generar recomendaciones accionables.
 
 ### Características principales
-- ✅ **ETL Pipeline**: Extracción automática de datos desde YouTube API
-- ✅ **Data Warehouse**: Almacenamiento estructurado en SQLite con versionado
-- ✅ **Análisis con IA**: Integración con Claude API para insights en lenguaje natural
-- ✅ **Dashboard Interactivo**: Visualización en tiempo real con Streamlit
-- ✅ **Análisis Predictivo**: Forecasting de métricas usando modelos ML (próximamente)
+- ✅ **Pipeline ETL**: extracción → guardado → análisis → comentarios → recomendaciones (`main.py`)
+- ✅ **Data Warehouse**: 22 tablas en MariaDB con snapshots históricos de métricas
+- ✅ **Análisis con IA**: Claude para recomendaciones, títulos, guiones, SEO, clasificación de contenido y sentimiento de comentarios
+- ✅ **Análisis Predictivo**: modelos RandomForest para viralidad, vistas y retención
+- ✅ **Computer Vision**: scoring de thumbnails y comparador A/B con Claude Vision
+- ✅ **Dashboard Interactivo**: 17 páginas en Streamlit, tema claro/oscuro y widgets personalizables
+- ✅ **Automatización**: scheduler diario, notificaciones por Telegram, exportación a Google Calendar y Sheets
 
 ---
 
 ## 🏗️ Arquitectura del Sistema
 
 ```
-┌─────────────────┐
-│  YouTube API v3 │
-└────────┬────────┘
-         │
-         ▼
+┌──────────────────────────┐
+│ YouTube Data API v3      │
+│ YouTube Analytics API    │
+│ Google Trends            │
+└────────────┬─────────────┘
+             │
+             ▼
 ┌─────────────────┐      ┌──────────────┐
-│  ETL Pipeline   │─────▶│  SQLite DB   │
-│  (Python)       │      │  (Histórico) │
+│  Pipeline ETL   │─────▶│  MariaDB     │
+│  (main.py)      │      │  (Histórico) │
 └────────┬────────┘      └──────┬───────┘
          │                      │
          ▼                      ▼
 ┌─────────────────┐      ┌──────────────┐
 │  Claude API     │◀────▶│  ML Models   │
-│  (Análisis)     │      │  (Predicción)│
+│  (Texto+Visión) │      │  (Predicción)│
 └────────┬────────┘      └──────┬───────┘
          │                      │
          └──────────┬───────────┘
                     ▼
-            ┌───────────────┐
-            │  Streamlit UI │
-            │  (Dashboard)  │
-            └───────────────┘
+     ┌───────────────────────────────┐
+     │  Streamlit UI · Telegram ·    │
+     │  Google Calendar / Sheets     │
+     └───────────────────────────────┘
 ```
 
 ---
@@ -57,47 +62,61 @@ Los creadores de contenido necesitan entender patrones de crecimiento, engagemen
 
 ### Prerequisitos
 
-- Python 3.9 o superior
+- Python 3.11 o superior
+- MariaDB (local o vía Docker Compose)
 - API Key de YouTube Data API v3 ([Obtener aquí](https://developers.google.com/youtube/v3/getting-started))
 - API Key de Anthropic Claude ([Obtener aquí](https://console.anthropic.com/))
+- Opcional: `credentials.json` de Google OAuth para YouTube Analytics, Calendar y Sheets
 
 ### Instalación
 
 ```bash
 # 1. Clonar el repositorio
-git clone https://github.com/tu-usuario/youtube-analytics-agent.git
-cd youtube-analytics-agent
+git clone https://github.com/rafawilliams/youtube-ai-agent-recomendation.git
+cd youtube-ai-agent-recomendation
 
 # 2. Crear entorno virtual
 python -m venv venv
 source venv/bin/activate  # En Windows: venv\Scripts\activate
 
 # 3. Instalar dependencias
-pip install -r requirements.txt
+pip install -r requirements.txt   # En Windows: requirements-windows.txt
 
 # 4. Configurar variables de entorno
 cp .env.example .env
-# Editar .env con tus API keys
+# Editar .env con tus API keys y datos de MariaDB
 ```
 
 ### Configuración
 
-Crear archivo `.env` con:
+Variables mínimas en `.env` (ver `.env.example` para todas las opciones):
 
 ```bash
 YOUTUBE_API_KEY=tu_youtube_api_key_aqui
+YOUTUBE_CHANNEL_IDS=UCxxxxxxxxxxxxxxxxxxxxxx
 ANTHROPIC_API_KEY=tu_claude_api_key_aqui
-DATABASE_PATH=./data/youtube_analytics.db
+
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=tu_usuario
+DB_PASSWORD=tu_password
+DB_NAME=youtube_analytics
 ```
 
 ### Ejecución
 
 ```bash
-# Ejecutar el dashboard
-streamlit run app.py
+# Ejecutar el pipeline completo
+python main.py
 
-# O ejecutar pipeline ETL manualmente
-python src/etl_pipeline.py --channel-id UC_x5XG1OV2P6uZZ5FSM9Ttw
+# Ejecutar el dashboard
+streamlit run dashboard.py
+
+# Ejecución automática diaria (--now para correr una vez al iniciar)
+python scheduler.py
+
+# O todo con Docker Compose (MariaDB + dashboard + scheduler)
+docker compose up -d
 ```
 
 ---
@@ -105,39 +124,37 @@ python src/etl_pipeline.py --channel-id UC_x5XG1OV2P6uZZ5FSM9Ttw
 ## 📁 Estructura del Proyecto
 
 ```
-youtube-analytics-agent/
+youtube-ai-agent-recomendation/
 │
-├── app.py                      # Aplicación principal Streamlit
-├── requirements.txt            # Dependencias Python
+├── main.py                    # Orquestación del pipeline
+├── dashboard.py               # Orquestador Streamlit (config, tema, sidebar, router)
+├── scheduler.py               # Ejecución diaria automática (APScheduler)
+├── requirements.txt           # Dependencias Python
 ├── .env.example               # Template de variables de entorno
-├── README.md                  # Este archivo
+├── Dockerfile / docker-compose.yml
 │
-├── src/
-│   ├── __init__.py
-│   ├── etl_pipeline.py        # ETL desde YouTube API
-│   ├── data_processor.py      # Transformación y limpieza
-│   ├── claude_analyzer.py     # Integración con Claude API
-│   ├── ml_models.py           # Modelos de ML (forecasting)
-│   └── database.py            # Gestión de SQLite
+├── src/                       # Módulos core
+│   ├── youtube_extractor.py   # YouTube Data API
+│   ├── analytics_extractor.py # YouTube Analytics API (OAuth)
+│   ├── database.py            # Gestión de MariaDB
+│   ├── ai_analyzer.py         # Recomendaciones con Claude
+│   ├── virality_predictor.py  # ML: probabilidad de viralidad
+│   ├── view_predictor.py      # ML: predicción de vistas
+│   ├── retention_predictor.py # ML: predicción de retención
+│   ├── content_classifier.py  # Clasificación de contenido con Claude
+│   ├── comment_analyzer.py    # Sentimiento y FAQ de comentarios
+│   ├── thumbnail_analyzer.py  # Scoring de thumbnails (Claude Vision)
+│   ├── series_detector.py     # Detección de series (regex + TF-IDF)
+│   ├── revenue_analyzer.py    # Ingresos estimados, ROI, evergreen
+│   └── ...                    # trends, telegram, google, logger, retry
 │
-├── data/
-│   ├── youtube_analytics.db   # Base de datos SQLite
-│   └── raw/                   # Datos crudos de respaldo
+├── page_modules/              # 17 páginas del dashboard
+│   └── shared/                # constants, theme, ui, data, predictors
 │
-├── notebooks/
-│   ├── 01_exploratory_analysis.ipynb
-│   ├── 02_feature_engineering.ipynb
-│   └── 03_model_training.ipynb
-│
-├── tests/
-│   ├── test_etl.py
-│   ├── test_processor.py
-│   └── test_models.py
-│
-└── docs/
-    ├── API_DOCUMENTATION.md
-    ├── ARCHITECTURE.md
-    └── DEPLOYMENT.md
+├── models/                    # Modelos ML cacheados (joblib)
+├── config/                    # Preferencias del dashboard
+├── tests/                     # Suite pytest
+└── 02-DOCS/                   # Wiki, specs y planes
 ```
 
 ---
@@ -145,31 +162,29 @@ youtube-analytics-agent/
 ## 🔧 Tecnologías Utilizadas
 
 ### Backend & Data
-- **Python 3.9+**: Lenguaje principal
-- **SQLite**: Base de datos relacional
-- **Pandas**: Manipulación de datos
-- **NumPy**: Operaciones numéricas
+- **Python 3.11+**: Lenguaje principal
+- **MariaDB** + **SQLAlchemy** + **PyMySQL**: Base de datos relacional
+- **Pandas** / **NumPy**: Manipulación de datos
 
 ### APIs & Integración
-- **YouTube Data API v3**: Extracción de métricas
-- **Anthropic Claude API**: Análisis con LLM
-- **Requests**: Llamadas HTTP
+- **YouTube Data API v3** y **YouTube Analytics API**: Extracción de métricas
+- **Anthropic Claude API**: Análisis con LLM (texto y visión)
+- **Google Trends** (pytrends), **Telegram**, **Google Calendar / Sheets**
+- **Tenacity**: Reintentos con backoff exponencial
 
-### Machine Learning (Roadmap)
-- **Scikit-learn**: Modelos tradicionales
-- **Prophet/ARIMA**: Time series forecasting
-- **TensorFlow/PyTorch**: Deep learning (futuro)
+### Machine Learning
+- **Scikit-learn**: RandomForest con TimeSeriesSplit, TF-IDF + similitud coseno
+- **Joblib**: Persistencia de modelos
 
 ### Frontend & Visualización
 - **Streamlit**: Dashboard interactivo
 - **Plotly**: Gráficos dinámicos
-- **Matplotlib/Seaborn**: Visualización estática
 
 ### DevOps & MLOps
 - **Git/GitHub**: Control de versiones
-- **pytest**: Testing automatizado
-- **Docker**: Containerización (próximamente)
-- **GitHub Actions**: CI/CD (próximamente)
+- **pytest** + **ruff**: Testing y calidad de código
+- **Docker / Docker Compose**: Containerización
+- **APScheduler**: Ejecución programada
 
 ---
 
@@ -178,44 +193,42 @@ youtube-analytics-agent/
 ### ✅ Implementado
 
 1. **Recolección de Datos**
-   - Estadísticas de canal (suscriptores, vistas totales)
-   - Métricas de videos (likes, comentarios, duración)
-   - Actualización incremental con deduplicación
+   - Estadísticas de canal y métricas de videos
+   - YouTube Analytics: retención, fuentes de tráfico
+   - Seguimiento de canales competidores y alertas
+   - Comentarios por video
 
 2. **Almacenamiento**
-   - Schema normalizado en SQLite
-   - Versionado de datos históricos
-   - Índices optimizados para queries
+   - 22 tablas en MariaDB con índices
+   - Snapshots históricos de métricas (`video_metrics`)
 
-3. **Análisis Básico**
-   - Engagement rate por video
-   - Tendencias de crecimiento
-   - Análisis de texto con Claude (títulos, descripciones)
+3. **Machine Learning**
+   - Predicción de viralidad, vistas y retención
+   - Detección de *late bloomers*, contenido *evergreen* y canibalización
+   - Detección automática de series
 
-4. **Visualización**
-   - Dashboard con métricas clave
-   - Gráficos de tendencias temporales
-   - Tablas interactivas
+4. **IA Generativa**
+   - Recomendaciones de contenido y plan semanal
+   - Sugerencias de títulos, guiones, descripciones SEO y tags
+   - Sentimiento de comentarios y detección de preguntas frecuentes
+   - Scoring de thumbnails y comparador A/B
+
+5. **Negocio**
+   - Estimación de ingresos (CPM) y ROI por tipo de contenido
+   - Cadencia y horarios óptimos de publicación
+
+6. **Visualización**
+   - Dashboard con 17 páginas, modo presentación y comparador temporal
+   - Tema claro/oscuro y widgets personalizables
 
 ### 🚧 En Desarrollo (Roadmap)
 
-**Fase 2 - ML Models (Meses 2-4)**
-- [ ] Forecasting de vistas con Prophet
-- [ ] Clasificación de videos exitosos (clasificación binaria)
-- [ ] Clustering de contenido similar
-- [ ] A/B testing de títulos con NLP
-
-**Fase 3 - MLOps (Meses 5-6)**
-- [ ] Pipeline de entrenamiento automatizado
-- [ ] Model registry con MLflow
-- [ ] Monitoreo de drift de datos
+- [ ] App de escritorio con motor local (FastAPI)
 - [ ] API REST para predicciones
-
-**Fase 4 - Escalabilidad (Meses 7-8)**
-- [ ] Migración a PostgreSQL
-- [ ] Containerización con Docker
-- [ ] Deployment en AWS/GCP
+- [ ] Autenticación del dashboard
+- [ ] Integración con Notion
 - [ ] CI/CD con GitHub Actions
+- [ ] Model registry y monitoreo de drift
 
 ---
 
@@ -225,12 +238,14 @@ youtube-analytics-agent/
 # Ejecutar todos los tests
 pytest
 
-# Con coverage
-pytest --cov=src tests/
+# Solo tests unitarios (sin la MariaDB local de pruebas)
+pytest -m "not db"
 
 # Tests específicos
-pytest tests/test_etl.py -v
+pytest tests/test_view_predictor.py -v
 ```
+
+Los tests marcados `db` usan una base local de pruebas (`DB_NAME_TEST`) y se saltan si no está disponible.
 
 ---
 
@@ -238,11 +253,11 @@ pytest tests/test_etl.py -v
 
 | Métrica | Valor |
 |---------|-------|
-| Cobertura de Tests | 75% |
-| Líneas de Código | ~2,500 |
-| Canales Analizados | 5+ |
-| Videos Procesados | 500+ |
-| API Calls/día | ~200 |
+| Líneas de código Python | ~15,000 |
+| Tests (pytest) | 116 |
+| Tablas en MariaDB | 22 |
+| Páginas del dashboard | 17 |
+| Modelos ML | 3 |
 
 ---
 
@@ -250,27 +265,24 @@ pytest tests/test_etl.py -v
 
 ### Data Engineering
 - Diseño de pipelines ETL robustos
-- Manejo de APIs RESTful con rate limiting
-- Modelado de datos relacionales
-- Optimización de queries SQL
+- Manejo de APIs con OAuth, rate limiting y reintentos
+- Modelado de datos relacionales e históricos
 
 ### Machine Learning
 - Feature engineering para métricas de engagement
-- Análisis exploratorio de datos (EDA)
-- Integración de LLMs para análisis cualitativo
-- Time series analysis (en desarrollo)
+- Validación temporal (TimeSeriesSplit) para evitar fugas de datos
+- NLP clásico (TF-IDF) para series y canibalización
+- Integración de LLMs y visión para análisis cualitativo
 
 ### Software Engineering
-- Arquitectura modular y escalable
-- Testing automatizado (TDD)
-- Documentación técnica completa
-- Git workflow con branches
+- Arquitectura modular (dashboard dividido en módulos de página)
+- Testing automatizado con pytest
+- Logging estructurado y manejo de errores transitorios
 
-### MLOps (en desarrollo)
-- Pipeline de datos automatizado
-- Versionado de modelos
-- Monitoreo de performance
-- Deployment de aplicaciones ML
+### MLOps
+- Pipeline de datos automatizado y programado
+- Persistencia y caché de modelos
+- Containerización con Docker Compose
 
 ---
 
@@ -286,38 +298,13 @@ Este es un proyecto de portfolio educativo. Si encuentras bugs o tienes sugerenc
 
 ---
 
-## 📝 Roadmap Detallado
-
-### Q2 2026 - Fundamentos ML
-- [x] Setup inicial del proyecto
-- [x] ETL pipeline funcional
-- [x] Dashboard básico Streamlit
-- [ ] Modelo de forecasting con Prophet
-- [ ] Feature engineering avanzado
-
-### Q3 2026 - MLOps & Deployment
-- [ ] Integración con MLflow
-- [ ] Containerización Docker
-- [ ] API REST con FastAPI
-- [ ] CI/CD con GitHub Actions
-- [ ] Deployment en cloud (AWS/GCP)
-
-### Q4 2026 - Advanced ML
-- [ ] Computer Vision para thumbnails
-- [ ] NLP para análisis de comentarios
-- [ ] Recommendation system
-- [ ] A/B testing framework
-
----
-
 ## 📞 Contacto
 
 **Rafael** - Specialist in Transformation Management @ Banistmo  
 Transicionando a AI/ML & MLOps
 
 - LinkedIn: [tu-perfil-linkedin](https://linkedin.com/in/tu-perfil)
-- GitHub: [@tu-usuario](https://github.com/tu-usuario)
-- Email: tu.email@ejemplo.com
+- GitHub: [@rafawilliams](https://github.com/rafawilliams)
 
 ---
 
@@ -339,7 +326,6 @@ Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) par
 ## 📚 Referencias y Recursos
 
 - [Building ETL Pipelines with Python](https://realpython.com/python-etl/)
-- [Time Series Forecasting Guide](https://otexts.com/fpp3/)
 - [MLOps Best Practices](https://ml-ops.org/)
 - [YouTube Analytics for Creators](https://creatoracademy.youtube.com/)
 
